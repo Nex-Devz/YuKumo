@@ -79,4 +79,108 @@ export class NodeManager {
   public size(): number {
     return this.nodes.size;
   }
+
+  /** Gets number of registered nodes (getter alias) */
+  public get count(): number {
+    return this.nodes.size;
+  }
+
+  /**
+   * Iterate over all nodes
+   */
+  public [Symbol.iterator](): IterableIterator<Node> {
+    return this.nodes.values();
+  }
+
+  /**
+   * String tag for NodeManager
+   */
+  public get [Symbol.toStringTag](): string {
+    return "NodeManager";
+  }
+
+  /**
+   * Check if any node satisfies the condition
+   */
+  public some(fn: (node: Node) => boolean): boolean {
+    return Array.from(this.nodes.values()).some(fn);
+  }
+
+  /**
+   * Check if all nodes satisfy the condition
+   */
+  public every(fn: (node: Node) => boolean): boolean {
+    return Array.from(this.nodes.values()).every(fn);
+  }
+
+  /**
+   * Filter nodes by condition
+   */
+  public filter(fn: (node: Node) => boolean): Node[] {
+    return Array.from(this.nodes.values()).filter(fn);
+  }
+
+  /**
+   * Map nodes to a new array
+   */
+  public map<U>(fn: (node: Node) => U): U[] {
+    return Array.from(this.nodes.values()).map(fn);
+  }
+
+  /**
+   * Find first node satisfying the condition
+   */
+  public find(fn: (node: Node) => boolean): Node | undefined {
+    return Array.from(this.nodes.values()).find(fn);
+  }
+
+  /**
+   * Iterate over all nodes
+   */
+  public forEach(fn: (node: Node, index: number) => void): void {
+    Array.from(this.nodes.values()).forEach(fn);
+  }
+
+  /**
+   * Reduce nodes to a single value
+   */
+  public reduce<U>(fn: (acc: U, node: Node) => U, initial: U): U {
+    return Array.from(this.nodes.values()).reduce(fn, initial);
+  }
+
+  /**
+   * Get an iterable iterator of all nodes
+   */
+  public values(): IterableIterator<Node> {
+    return this.nodes.values();
+  }
+
+  /**
+   * Get an iterable iterator of node keys
+   */
+  public keys(): IterableIterator<string> {
+    return this.nodes.keys();
+  }
+
+  /**
+   * Get an iterable iterator of node entries
+   */
+  public entries(): IterableIterator<[string, Node]> {
+    return this.nodes.entries();
+  }
+
+  /**
+   * Get a Map of all nodes
+   */
+  public get nodeMap(): Map<string, Node> {
+    return new Map(this.nodes);
+  }
+
+  /**
+   * Get least used node
+   */
+  public getLeastUsed(): Node | null {
+    const selector = new LeastUsedSelector();
+    return selector.pick(this.getAll(), "");
+  }
 }

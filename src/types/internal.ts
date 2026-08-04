@@ -91,6 +91,10 @@ export interface ManagerOptions {
     start?(): void | Promise<void>;
     destroy?(): void | Promise<void>;
   }>;
+  /** Voice connection timeout in milliseconds (default 15000) */
+  voiceConnectionTimeout?: number;
+  /** Number of voice connection retry attempts before throwing (default 0) */
+  voiceConnectionRetries?: number;
 }
 
 export type RepeatMode = "none" | "track" | "queue";
@@ -124,6 +128,8 @@ export interface SearchOptions {
 
 export interface SearchResult {
   loadType: LoadResult["loadType"];
+  /** Uppercase loadType alias for migration compat (e.g. "TRACK_LOADED", "SEARCH_RESULT") */
+  type?: string;
   tracks: TrackData[];
   playlistInfo?: {
     name: string;
@@ -155,6 +161,12 @@ export type EventMap = {
   playerCreate: (guildId: string) => void;
   playerDestroy: (guildId: string) => void;
   playerMove: (guildId: string, fromNode: string, toNode: string) => void;
+  /** Emitted when the bot disconnects from a voice channel */
+  playerDisconnect: (guildId: string, reason: string) => void;
+  /** Emitted when queue empties and playback stops — alias for queueEnd */
+  playerEmpty: (guildId: string) => void;
+  /** Emitted when the bot is moved between voice channels */
+  playerMoved: (guildId: string, oldChannel: string, newChannel: string) => void;
   trackStart: (guildId: string, track: TrackData) => void;
   trackEnd: (guildId: string, track: TrackData, reason: string) => void;
   trackStuck: (guildId: string, track: TrackData, thresholdMs: number) => void;
@@ -171,6 +183,8 @@ export type EventMap = {
   voiceReady: (guildId: string) => void;
   voiceDisconnected: (guildId: string) => void;
   voiceReconnecting: (guildId: string) => void;
+  /** Emitted when a voice connection times out */
+  voiceConnectionTimeout: (guildId: string) => void;
   autoplayTrackAdded: (guildId: string, track: TrackData) => void;
   playerAutoPaused: (guildId: string) => void;
   playerAutoDisconnected: (guildId: string) => void;

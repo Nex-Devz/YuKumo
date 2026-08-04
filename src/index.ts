@@ -1,5 +1,6 @@
 export * from "./types/protocol.ts";
 export * from "./types/internal.ts";
+export * from "./types/constants.ts";
 export * from "./errors/index.ts";
 export * from "./utils/index.ts";
 export * from "./rest/index.ts";

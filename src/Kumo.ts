@@ -23,6 +23,7 @@ import type {
   EventCallback,
 } from "./types/internal.ts";
 import type { TrackData, LoadResult, LavaSearchType, LavaSearchResult } from "./types/protocol.ts";
+import { LoadTypeMap } from "./types/constants.ts";
 
 export interface YuKumoPlayerCreateOptions {
   guildId: string;
@@ -36,20 +37,22 @@ export interface YuKumoPlayerCreateOptions {
 function loadResultToSearchResult(result: LoadResult): SearchResult {
   switch (result.loadType) {
     case "track":
-      return { loadType: "track", tracks: [result.data] };
+      return { loadType: "track", type: LoadTypeMap["track"], tracks: [result.data] };
     case "playlist":
       return {
         loadType: "playlist",
+        type: LoadTypeMap["playlist"],
         tracks: result.data.tracks,
         playlistInfo: { name: result.data.info.name, selectedTrack: 0 },
       };
     case "search":
-      return { loadType: "search", tracks: result.data };
+      return { loadType: "search", type: LoadTypeMap["search"], tracks: result.data };
     case "empty":
-      return { loadType: "empty", tracks: [] };
+      return { loadType: "empty", type: LoadTypeMap["empty"], tracks: [] };
     case "error":
       return {
         loadType: "error",
+        type: LoadTypeMap["error"],
         tracks: [],
         exception: {
           message: result.data.message,
@@ -117,6 +120,10 @@ export class YuKumo {
   public readonly sendGatewayPayload?: (guildId: string, payload: VoiceGatewayPayload) => void;
   /** Level-filtered logger for internal diagnostics (no-op unless configured) */
   public readonly logger: Logger;
+  /** Voice connection timeout in milliseconds (default 15000) */
+  public readonly voiceConnectionTimeout: number;
+  /** Number of voice connection retry attempts before failing (default 0) */
+  public readonly voiceConnectionRetries: number;
   private _userId: string;
   private readonly pendingPlayerCreates = new Map<string, Promise<Player>>();
   private readonly adapters = new Set<{ destroy(): void }>();
@@ -134,6 +141,8 @@ export class YuKumo {
       autoReconnect: options.onDisconnect?.autoReconnect ?? false,
     };
     this.storage = options.storageAdapter ?? new MemoryStorage();
+    this.voiceConnectionTimeout = options.voiceConnectionTimeout ?? 15000;
+    this.voiceConnectionRetries = options.voiceConnectionRetries ?? 0;
     this.events = new EventDispatcher();
     this.voice = new VoiceStateTracker(this.events);
     this.searchCache = new SearchCache();
@@ -362,7 +371,10 @@ export class YuKumo {
       }
     }
 
-    player.events.on("queueEnd", (guildId: string) => this.events.emit("queueEnd", guildId));
+    player.events.on("queueEnd", (guildId: string) => {
+      this.events.emit("queueEnd", guildId);
+      this.events.emit("playerEmpty" as EventName, guildId);
+    });
 
     // Join the voice channel right away when the manager can dispatch OP4
     if (this.sendGatewayPayload != null) {
@@ -489,6 +501,7 @@ export class YuKumo {
    * configured onDisconnect policy (autoReconnect wins over destroyPlayer).
    */
   private async handleVoiceDisconnect(guildId: string, player: Player): Promise<void> {
+    this.events.emit("playerDisconnect" as EventName, guildId, "voiceChannelLeft");
     if (this.onDisconnect.autoReconnect && this.sendGatewayPayload != null) {
       const position = player.position;
       const paused = player.paused;
@@ -578,6 +591,21 @@ export class YuKumo {
   /** Gets all configured nodes */
   public getNodes(): Node[] {
     return this.nodes.getAll();
+  }
+
+  /** Alias for destroyPlayer — matches common wrapper naming */
+  public async deletePlayer(guildId: string): Promise<boolean> {
+    return this.destroyPlayer(guildId);
+  }
+
+  /** Returns true if any registered node is in "connected" state */
+  public isUseable(): boolean {
+    return this.nodes.some((n: Node) => n.state === "connected");
+  }
+
+  /** Alias for this.nodes — matches other wrappers' naming convention */
+  public get nodeManager(): NodeManager {
+    return this.nodes;
   }
 
   /** Subscribes to global client events */

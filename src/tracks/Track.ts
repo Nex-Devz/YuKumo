@@ -55,6 +55,26 @@ export class Track {
     return this.info.sourceName;
   }
 
+  /** Alias for duration — matches Lavalink's raw info.length property name */
+  public get length(): number {
+    return this.info.length;
+  }
+
+  /** Alias for sourceName — shorter naming convention */
+  public get source(): string {
+    return this.info.sourceName;
+  }
+
+  /** Alias for thumbnail — direct artworkUrl access */
+  public get artworkUrl(): string | null {
+    return this.info.artworkUrl;
+  }
+
+  /** Track ISRC code if available */
+  public get isrc(): string | null {
+    return this.info.isrc;
+  }
+
   public toJSON(): TrackData {
     return {
       encoded: this.encoded,

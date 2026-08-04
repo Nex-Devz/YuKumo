@@ -3,6 +3,7 @@ import { RestClient } from "../rest/RestClient.ts";
 import type { NodeConfig, NodeState, NodeStats } from "../types/internal.ts";
 import { EventDispatcher } from "../ws/EventDispatcher.ts";
 import type { EventName, EventCallback } from "../types/internal.ts";
+import { NodeStateCode } from "../types/constants.ts";
 
 export type { NodeState };
 
@@ -128,6 +129,22 @@ export class Node {
   /** Gets the latest round-trip WebSocket ping in ms if available */
   public get ping(): number | null {
     return this._ping;
+  }
+
+  /** Boolean shorthand — true when node WebSocket is connected */
+  public get connected(): boolean {
+    return this.state === "connected";
+  }
+
+  /** Integer state code for migration compat (see NodeStateCode enum) */
+  public get stateCode(): number {
+    const map: Record<string, number> = {
+      disconnected: NodeStateCode.DISCONNECTED,
+      connecting: NodeStateCode.CONNECTING,
+      connected: NodeStateCode.CONNECTED,
+      destroyed: NodeStateCode.DESTROYED,
+    };
+    return map[this.state] ?? 0;
   }
 
   /** Gets the calculated penalty score */

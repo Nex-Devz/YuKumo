@@ -170,6 +170,36 @@ export class Player<TTrack extends TrackData = TrackData> {
     return this._textChannelId;
   }
 
+  /** Alias for voiceChannelId — matches Shoukaku/Erela convention */
+  public get voiceId(): string {
+    return this._voiceChannelId;
+  }
+
+  /** Sets voice channel ID — alias setter for voiceId */
+  public set voiceId(id: string) {
+    this._voiceChannelId = id;
+  }
+
+  /** Alias for textChannelId — matches Shoukaku/Erela convention */
+  public get textId(): string | null {
+    return this._textChannelId;
+  }
+
+  /** Sets text channel ID — alias setter for textId */
+  public set textId(id: string | null) {
+    this._textChannelId = id;
+  }
+
+  /** Whether the player has voice credentials and its node is connected */
+  public get connected(): boolean {
+    return this.hasVoiceCredentials && this._node.state === "connected";
+  }
+
+  /** Alias for this.filters (FilterChain instance) — matches other wrappers' naming */
+  public get filterManager(): FilterChain {
+    return this.filters;
+  }
+
   /** Gets current voice connection parameters */
   public get voiceState(): InternalVoiceState {
     return { ...this._voiceState };
@@ -398,6 +428,28 @@ export class Player<TTrack extends TrackData = TrackData> {
   public setLoop(mode: "none" | "track" | "queue"): this {
     this.queue.setRepeatMode(mode);
     return this;
+  }
+
+  /** Unified pause/resume toggle — matches Erela.js/Magmastream convention */
+  public async setPaused(state: boolean): Promise<void> {
+    return state ? this.pause() : this.resume();
+  }
+
+  /** Alias for setNode — moves player to a different Lavalink node */
+  public async move(node: Node): Promise<void> {
+    return this.setNode(node);
+  }
+
+  /** Convenience wrapper for setVoiceChannel with options object */
+  public async setVoice(options: {
+    voiceId: string;
+    selfDeaf?: boolean;
+    selfMute?: boolean;
+  }): Promise<void> {
+    return this.setVoiceChannel(options.voiceId, {
+      selfDeaf: options.selfDeaf,
+      selfMute: options.selfMute,
+    });
   }
 
   /**

@@ -65,6 +65,16 @@ export class Queue<T> {
     return this.tracks;
   }
 
+  /** Alias for currentTrack — matches Erela.js/Poru convention */
+  public get current(): T | null {
+    return this.currentTrack;
+  }
+
+  /** Number of tracks in queue — Array.length convention alias for size */
+  public get length(): number {
+    return this.tracks.length;
+  }
+
   /** Gets readonly array of played track history */
   public get historyList(): readonly T[] {
     return this.history;
@@ -312,6 +322,21 @@ export class Queue<T> {
   /** Removes a slice of tracks starting from start index */
   public removeRange(start: number, count: number): T[] {
     return this.remove(start, count);
+  }
+
+  /** Alias for enqueue — matches common collection naming */
+  public add(track: T, index?: number): this {
+    return this.enqueue(track, index);
+  }
+
+  /** Alias for priorityEnqueue — inserts at front of queue */
+  public unshift(track: T): this {
+    return this.priorityEnqueue(track);
+  }
+
+  /** Alias for remove — splice semantics */
+  public splice(start: number, deleteCount?: number): T[] {
+    return this.remove(start, deleteCount);
   }
 
   /** Clears all tracks from queue except the currently playing track */
