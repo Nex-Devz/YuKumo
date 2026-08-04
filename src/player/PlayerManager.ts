@@ -12,7 +12,8 @@ export class PlayerManager {
 
   public create(options: Omit<PlayerOptions, "kumo">): Player {
     const existing = this.players.get(options.guildId);
-    if (existing != null) {
+    // A destroyed player is a dead husk — replace it instead of handing it back
+    if (existing != null && !existing.destroyed) {
       return existing;
     }
 
@@ -21,6 +22,19 @@ export class PlayerManager {
     this.players.set(options.guildId, player);
     options.node.playerCount += 1;
     return player;
+  }
+
+  /**
+   * Removes a player from the registry without destroying it. Called by
+   * Player.destroy() so direct destroys (auto-disconnect, channel delete)
+   * can't leak stale entries. The identity check guards against dropping a
+   * newer player created for the same guild.
+   */
+  public uncache(guildId: string, player?: Player): void {
+    const current = this.players.get(guildId);
+    if (player === undefined || current === player) {
+      this.players.delete(guildId);
+    }
   }
 
   public get(guildId: string): Player | undefined {
@@ -35,9 +49,9 @@ export class PlayerManager {
     const player = this.players.get(guildId);
     if (player === undefined) return false;
 
+    // Player.destroy() uncaches itself and adjusts node playerCount
     await player.destroy();
     this.players.delete(guildId);
-    player.node.playerCount = Math.max(0, player.node.playerCount - 1);
     return true;
   }
 

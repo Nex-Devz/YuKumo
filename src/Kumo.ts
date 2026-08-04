@@ -455,9 +455,10 @@ export class YuKumo {
     const shouldDestroy = await this.plugins.runBeforeDestroy(guildId);
     if (!shouldDestroy) return false;
 
+    // Player.destroy() emits the global "playerDestroy" event exactly once,
+    // covering both this path and direct player.destroy() calls
     const result = await this.players.destroy(guildId);
     if (result) {
-      this.events.emit("playerDestroy", guildId);
       await this.plugins.runAfterDestroy(guildId);
     }
     return result;

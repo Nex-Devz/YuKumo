@@ -1,8 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Player } from "./Player.ts";
 import { PlayerManager } from "./PlayerManager.ts";
 import { Node } from "../node/Node.ts";
 import { VolumeFilter } from "../filters/Filters.ts";
+import { EventDispatcher } from "../ws/EventDispatcher.ts";
+import type { YuKumo } from "../Kumo.ts";
 import type { TrackData } from "../types/protocol.ts";
 
 function createMockNode(name = "test-node"): Node {
@@ -136,6 +138,8 @@ describe("Player", () => {
     const node = createMockNode();
     const player = createPlayer(node);
 
+    player.queue.enqueue(mockTrack);
+    await player.play();
     await player.pause();
     expect(player.paused).toBe(true);
     expect(player.status).toBe("paused");
@@ -145,10 +149,30 @@ describe("Player", () => {
     const node = createMockNode();
     const player = createPlayer(node);
 
+    player.queue.enqueue(mockTrack);
+    await player.play();
     await player.pause();
     await player.resume();
     expect(player.paused).toBe(false);
     expect(player.status).toBe("playing");
+  });
+
+  it("should not fabricate playback status when pausing/resuming while idle", async () => {
+    const node = createMockNode();
+    const player = createPlayer(node);
+
+    await player.resume();
+    expect(node.rest.updatePlayer).not.toHaveBeenCalled();
+    expect(player.status).toBe("idle");
+
+    await player.pause();
+    const callsAfterFirstPause = (node.rest.updatePlayer as ReturnType<typeof vi.fn>).mock.calls.length;
+    await player.pause();
+    expect((node.rest.updatePlayer as ReturnType<typeof vi.fn>).mock.calls.length).toBe(
+      callsAfterFirstPause,
+    );
+    expect(player.paused).toBe(true);
+    expect(player.status).toBe("idle");
   });
 
   it("should stop", async () => {
@@ -358,5 +382,248 @@ describe("PlayerManager", () => {
 
     await manager.destroyAll();
     expect(manager.size()).toBe(0);
+  });
+});
+
+// Event-driven behavior tests — these use a live EventDispatcher on the mock
+// node so trackEnd/trackStart/playerUpdate handlers actually run.
+
+function makeTrack(id: string, length = 30000): TrackData {
+  return {
+    encoded: `encoded-${id}`,
+    info: {
+      identifier: id,
+      isSeekable: true,
+      author: `author-${id}`,
+      length,
+      isStream: false,
+      position: 0,
+      title: `title-${id}`,
+      uri: null,
+      artworkUrl: null,
+      isrc: null,
+      sourceName: "test",
+    },
+    pluginInfo: {},
+  };
+}
+
+function makeLiveNode(id = "live-node") {
+  return {
+    id,
+    playerCount: 0,
+    state: "connected",
+    ws: { eventDispatcher: new EventDispatcher() },
+    rest: {
+      sessionId: "lava-session" as string | null,
+      updatePlayer: vi.fn().mockResolvedValue({}),
+      destroyPlayer: vi.fn().mockResolvedValue(undefined),
+      loadTracks: vi.fn().mockResolvedValue({ loadType: "empty", data: null }),
+    },
+  };
+}
+
+function makeMockKumo() {
+  const kumo = {
+    events: new EventDispatcher(),
+    voice: { getVoiceState: () => null },
+    sendGatewayPayload: vi.fn(),
+  } as unknown as YuKumo;
+  (kumo as { players: PlayerManager }).players = new PlayerManager(kumo);
+  return kumo;
+}
+
+const VOICE_STATE = {
+  sessionId: "voice-session",
+  channelId: "vc-1",
+  endpoint: "voice.discord.gg",
+  token: "voice-token",
+};
+
+/** REST calls that actually start a track (payload contains a non-null encoded track) */
+function trackPlays(node: ReturnType<typeof makeLiveNode>): string[] {
+  return node.rest.updatePlayer.mock.calls
+    .filter((c) => c[2]?.track?.encoded != null)
+    .map((c) => c[2].track.encoded as string);
+}
+
+async function flush(): Promise<void> {
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+}
+
+describe("Player track-end handling and lifecycle", () => {
+  let node: ReturnType<typeof makeLiveNode>;
+  let kumo: YuKumo;
+
+  beforeEach(() => {
+    node = makeLiveNode();
+    kumo = makeMockKumo();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function createLivePlayer(guildId = "guild-1") {
+    const player = kumo.players.create({
+      guildId,
+      node: node as unknown as Node,
+      voiceChannelId: "vc-1",
+    });
+    player.setVoiceState(VOICE_STATE);
+    return player;
+  }
+
+  it("advances to the next track on finished trackEnd", async () => {
+    const player = createLivePlayer();
+    player.queue.enqueue(makeTrack("a")).enqueue(makeTrack("b"));
+    await player.play();
+
+    node.ws.eventDispatcher.emit("trackEnd", "guild-1", makeTrack("a"), "finished");
+    await flush();
+
+    expect(trackPlays(node)).toEqual(["encoded-a", "encoded-b"]);
+  });
+
+  it("serializes overlapping track-end handling (no double advance)", async () => {
+    const player = createLivePlayer();
+    player.queue.enqueue(makeTrack("a")).enqueue(makeTrack("b")).enqueue(makeTrack("c"));
+    await player.play();
+
+    node.ws.eventDispatcher.emit("trackEnd", "guild-1", makeTrack("a"), "finished");
+    node.ws.eventDispatcher.emit("trackEnd", "guild-1", makeTrack("b"), "finished");
+    await flush();
+
+    expect(trackPlays(node)).toEqual(["encoded-a", "encoded-b", "encoded-c"]);
+  });
+
+  it("skip() with nothing playing emits queueEnd and does not throw when autoplay is on", async () => {
+    const player = createLivePlayer();
+    player.setAutoplay(true);
+    const queueEnd = vi.fn();
+    player.on("queueEnd", queueEnd);
+
+    const result = await player.skip();
+
+    expect(result).toBeNull();
+    expect(queueEnd).toHaveBeenCalledWith("guild-1");
+  });
+
+  it("skip() advances past repeat-track mode", async () => {
+    const player = createLivePlayer();
+    player.setLoop("track");
+    player.queue.enqueue(makeTrack("a")).enqueue(makeTrack("b"));
+    await player.play();
+
+    const next = await player.skip();
+    expect(next?.encoded).toBe("encoded-b");
+    expect(trackPlays(node)).toEqual(["encoded-a", "encoded-b"]);
+  });
+
+  it("setVolume remembers the value while the node session is unavailable", async () => {
+    const player = createLivePlayer();
+    node.rest.sessionId = null;
+
+    await player.setVolume(50);
+    expect(player.volume).toBe(50);
+    expect(node.rest.updatePlayer).not.toHaveBeenCalled();
+
+    node.rest.sessionId = "lava-session";
+    player.queue.enqueue(makeTrack("a"));
+    await player.play();
+    const playCall = node.rest.updatePlayer.mock.calls.find((c) => c[2]?.track != null);
+    expect(playCall?.[2].volume).toBe(50);
+  });
+
+  it("seek() clamps to [0, track length]", async () => {
+    const player = createLivePlayer();
+    player.queue.enqueue(makeTrack("a", 30000));
+    await player.play();
+
+    await player.seek(-500);
+    expect(node.rest.updatePlayer.mock.calls.at(-1)?.[2].position).toBe(0);
+
+    await player.seek(99999999);
+    expect(node.rest.updatePlayer.mock.calls.at(-1)?.[2].position).toBe(30000);
+  });
+
+  it("interpolates position between playerUpdates and freezes it while paused", async () => {
+    vi.useFakeTimers();
+    const player = createLivePlayer();
+    player.queue.enqueue(makeTrack("a", 60000));
+    await player.play();
+    node.ws.eventDispatcher.emit("trackStart", "guild-1", makeTrack("a"));
+
+    node.ws.eventDispatcher.emit("playerUpdate", "guild-1", {
+      time: 0,
+      position: 1000,
+      connected: true,
+      ping: 1,
+    });
+    vi.advanceTimersByTime(2000);
+    expect(player.position).toBe(3000);
+
+    await player.pause();
+    const frozen = player.position;
+    vi.advanceTimersByTime(5000);
+    expect(player.position).toBe(frozen);
+  });
+
+  it("runs autoplay with a custom fetcher when the queue drains", async () => {
+    const player = createLivePlayer();
+    const auto = makeTrack("auto");
+    const fetcher = vi.fn().mockResolvedValue(auto);
+    player.setAutoplay(true, fetcher);
+    const added = vi.fn();
+    player.on("autoplayTrackAdded", added);
+
+    player.queue.enqueue(makeTrack("a"));
+    await player.play();
+    node.ws.eventDispatcher.emit("trackEnd", "guild-1", makeTrack("a"), "finished");
+    await flush();
+
+    expect(fetcher).toHaveBeenCalledWith(expect.objectContaining({ encoded: "encoded-a" }));
+    expect(added).toHaveBeenCalledWith("guild-1", auto);
+    expect(trackPlays(node)).toEqual(["encoded-a", "encoded-auto"]);
+  });
+
+  it("destroy() unregisters from the manager, adjusts playerCount, and emits playerDestroy once", async () => {
+    const player = createLivePlayer();
+    expect(node.playerCount).toBe(1);
+    const destroyed = vi.fn();
+    kumo.events.on("playerDestroy", destroyed);
+
+    await player.destroy();
+    await player.destroy(); // double destroy is a no-op
+
+    expect(kumo.players.has("guild-1")).toBe(false);
+    expect(node.playerCount).toBe(0);
+    expect(destroyed).toHaveBeenCalledTimes(1);
+    expect(node.rest.destroyPlayer).toHaveBeenCalledWith("lava-session", "guild-1");
+  });
+
+  it("empty-VC auto-disconnect destroys AND unregisters the player", async () => {
+    vi.useFakeTimers();
+    const player = createLivePlayer();
+    player.emptyVcTimeoutMs = 1000;
+    const autoDisconnected = vi.fn();
+    player.on("playerAutoDisconnected", autoDisconnected);
+
+    player.setVcMemberCount(1);
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(autoDisconnected).toHaveBeenCalledWith("guild-1");
+    expect(player.destroyed).toBe(true);
+    expect(kumo.players.has("guild-1")).toBe(false);
+  });
+
+  it("manager replaces a destroyed player instead of returning the husk", async () => {
+    const player = createLivePlayer();
+    await player.destroy();
+
+    const fresh = createLivePlayer();
+    expect(fresh).not.toBe(player);
+    expect(fresh.destroyed).toBe(false);
+    expect(kumo.players.get("guild-1")).toBe(fresh);
   });
 });

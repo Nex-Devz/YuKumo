@@ -65,6 +65,8 @@ export class Player<TTrack extends TrackData = TrackData> {
   private readonly kumo: YuKumo;
   private _status: PlayerStatus = "idle";
   private _position: number = 0;
+  /** Wall-clock time of the last position sync, for interpolation between playerUpdates */
+  private _positionTimestamp: number = 0;
   private _volume: number = 100;
   private _voiceChannelId: string;
   private _textChannelId: string | null;
@@ -89,7 +91,7 @@ export class Player<TTrack extends TrackData = TrackData> {
     if (guildId !== this.guildId) return;
     this.events.emit("trackEnd", guildId, track, reason);
     if (reason === "finished" || reason === "loadFailed") {
-      this.handleTrackEnd(track as TTrack, reason);
+      this.queueTrackEndTask(track as TTrack, reason).catch(() => undefined);
     }
   };
 
@@ -103,12 +105,13 @@ export class Player<TTrack extends TrackData = TrackData> {
   private readonly boundOnTrackStuck = (guildId: string, track: TrackData, thresholdMs: number) => {
     if (guildId !== this.guildId) return;
     this.events.emit("trackStuck", guildId, track, thresholdMs);
-    this.handleTrackEnd(track as TTrack, "stuck");
+    this.queueTrackEndTask(track as TTrack, "stuck").catch(() => undefined);
   };
 
   private readonly boundOnPlayerUpdate = (guildId: string, state: PlayerState) => {
     if (guildId !== this.guildId) return;
     this._position = state.position;
+    this._positionTimestamp = Date.now();
     this.events.emit("playerUpdate", guildId, state as never);
   };
 
@@ -145,9 +148,18 @@ export class Player<TTrack extends TrackData = TrackData> {
     return this._status;
   }
 
-  /** Gets current playback position in milliseconds */
+  /**
+   * Gets current playback position in milliseconds. Lavalink only pushes
+   * position every ~5s, so while playing (and not paused) the value is
+   * interpolated from the last sync, clamped to the track length when known.
+   */
   public get position(): number {
-    return this._position;
+    if (this._status !== "playing" || this._paused || this._positionTimestamp === 0) {
+      return this._position;
+    }
+    const estimated = this._position + (Date.now() - this._positionTimestamp);
+    const length = this.queue.currentTrack?.info?.length;
+    return typeof length === "number" && length > 0 ? Math.min(estimated, length) : estimated;
   }
 
   /** Gets current player volume (0 to 1000) */
@@ -231,7 +243,25 @@ export class Player<TTrack extends TrackData = TrackData> {
   /** Consecutive queue-advance failures; guards against retry-looping a dead node or all-broken queue */
   private _advanceFailures = 0;
 
-  private async handleTrackEnd(lastTrack: TTrack, reason: string): Promise<void> {
+  /**
+   * Serializes track-end handling. Natural ends, stuck tracks, and skips can
+   * otherwise interleave their async handling and double-advance the queue.
+   */
+  private _trackEndChain: Promise<void> = Promise.resolve();
+
+  private queueTrackEndTask(lastTrack: TTrack | null, reason: string): Promise<void> {
+    const run = this._trackEndChain.then(() => {
+      if (this._destroyed) return;
+      return this.handleTrackEnd(lastTrack, reason);
+    });
+    this._trackEndChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  private async handleTrackEnd(lastTrack: TTrack | null, reason: string): Promise<void> {
     if (this._destroyed) return;
 
     // A track that failed to load must not be repeated, or repeat-track mode
@@ -259,7 +289,8 @@ export class Player<TTrack extends TrackData = TrackData> {
       }
     }
 
-    if (this.autoplay) {
+    // lastTrack is null when skip() fires with nothing playing — no seed for recommendations
+    if (this.autoplay && lastTrack != null) {
       try {
         let autoTrack: TTrack | null = null;
         if (this.autoplayFetcher != null) {
@@ -339,6 +370,8 @@ export class Player<TTrack extends TrackData = TrackData> {
             this.destroy().catch(() => undefined);
           }
         }, this.emptyVcTimeoutMs);
+        // Don't let an idle-VC countdown keep the process alive
+        (this.emptyVcTimer as { unref?: () => void }).unref?.();
       }
     } else {
       if (this.emptyVcTimer != null) {
@@ -376,7 +409,7 @@ export class Player<TTrack extends TrackData = TrackData> {
 
     const skipped = this.currentTrack;
     await this.stop();
-    await this.handleTrackEnd(skipped as TTrack, "skipped");
+    await this.queueTrackEndTask(skipped, "skipped");
     return this.currentTrack;
   }
 
@@ -393,7 +426,7 @@ export class Player<TTrack extends TrackData = TrackData> {
     this._voiceStateSent = false;
 
     if (this._status === "playing" && this.currentTrack != null) {
-      await this.playTrack(this.currentTrack, { position: this._position });
+      await this.playTrack(this.currentTrack, { position: this.position });
     } else {
       // Not playing — still register the player (voice + volume/filters) on the new node
       await this.resync().catch(() => undefined);
@@ -586,6 +619,8 @@ export class Player<TTrack extends TrackData = TrackData> {
         },
         false,
       );
+      this._position = options?.position ?? 0;
+      this._positionTimestamp = Date.now();
     } catch (error) {
       this._status = previousStatus === "playing" ? "idle" : previousStatus;
       throw error;
@@ -606,26 +641,36 @@ export class Player<TTrack extends TrackData = TrackData> {
     this._status = "idle";
     this._paused = false;
     this._position = 0;
+    this._positionTimestamp = Date.now();
   }
 
-  /** Pauses current track playback */
+  /** Pauses current track playback (no-op when already paused) */
   public async pause(): Promise<void> {
     if (this._destroyed) throw new PlayerError("Player is destroyed", this.guildId);
+    if (this._paused) return;
 
     const sessionId = this._node.rest.sessionId;
     if (sessionId == null) return;
+
+    // Freeze the interpolated position before flipping the paused flag
+    const frozenPosition = this.position;
 
     await this._node.rest.updatePlayer(sessionId, this.guildId, {
       paused: true,
     });
 
+    this._position = frozenPosition;
+    this._positionTimestamp = Date.now();
     this._paused = true;
-    this._status = "paused";
+    if (this._status === "playing") {
+      this._status = "paused";
+    }
   }
 
-  /** Resumes paused track playback */
+  /** Resumes paused track playback (no-op when not paused) */
   public async resume(): Promise<void> {
     if (this._destroyed) throw new PlayerError("Player is destroyed", this.guildId);
+    if (!this._paused) return;
 
     const sessionId = this._node.rest.sessionId;
     if (sessionId == null) return;
@@ -635,34 +680,49 @@ export class Player<TTrack extends TrackData = TrackData> {
     });
 
     this._paused = false;
-    this._status = "playing";
+    this._positionTimestamp = Date.now();
+    if (this._status === "paused") {
+      this._status = "playing";
+    }
   }
 
-  /** Sets player volume (0 to 1000) and commits to Lavalink node */
+  /**
+   * Sets player volume (0 to 1000). The value is remembered even while the
+   * node session is unavailable and applied on the next playTrack().
+   */
   public async setVolume(volume: number): Promise<void> {
     if (this._destroyed) throw new PlayerError("Player is destroyed", this.guildId);
 
     const clamped = Math.max(0, Math.min(1000, volume));
+    this._volume = clamped;
+
     const sessionId = this._node.rest.sessionId;
     if (sessionId == null) return;
 
     await this._node.rest.updatePlayer(sessionId, this.guildId, {
       volume: clamped,
     });
-
-    this._volume = clamped;
   }
 
-  /** Seeks to position in track (milliseconds) */
+  /** Seeks to position in track (milliseconds), clamped to [0, track length] */
   public async seek(position: number): Promise<void> {
     if (this._destroyed) throw new PlayerError("Player is destroyed", this.guildId);
+
+    const length = this.queue.currentTrack?.info?.length;
+    const target = Math.max(
+      0,
+      typeof length === "number" && length > 0 ? Math.min(position, length) : position,
+    );
 
     const sessionId = this._node.rest.sessionId;
     if (sessionId == null) return;
 
     await this._node.rest.updatePlayer(sessionId, this.guildId, {
-      position,
+      position: target,
     });
+
+    this._position = target;
+    this._positionTimestamp = Date.now();
   }
 
   /** Applies current filter chain payload to Lavalink node in real time */
@@ -826,7 +886,7 @@ export class Player<TTrack extends TrackData = TrackData> {
       ...(current != null
         ? {
             track: { encoded: current.encoded },
-            position: this._position,
+            position: this.position,
             paused: this._paused,
           }
         : {}),
@@ -866,7 +926,12 @@ export class Player<TTrack extends TrackData = TrackData> {
     }
   }
 
-  /** Destroys player, leaves the voice channel, clears queue and filters, and removes event listeners */
+  /**
+   * Destroys player, leaves the voice channel, clears queue and filters,
+   * removes event listeners, and unregisters itself from the PlayerManager.
+   * Safe to call directly (e.g. from auto-disconnect) — manager map and node
+   * playerCount stay consistent either way.
+   */
   public async destroy(): Promise<void> {
     if (this._destroyed) return;
     if (this.emptyVcTimer != null) {
@@ -876,10 +941,14 @@ export class Player<TTrack extends TrackData = TrackData> {
     this.sendVoiceStateToDiscord(null);
     this._destroyed = true;
     this._status = "destroyed";
+    this._node.playerCount = Math.max(0, this._node.playerCount - 1);
+    this.kumo?.players?.uncache(this.guildId, this as unknown as Player);
     this.settleVoiceReadyWaiters(new PlayerError("Player is destroyed", this.guildId));
     this.removeNodeListeners();
     this.queue.clear();
+    this.queue.clearHistory();
     this.filters.clear();
+    this.data.clear();
     this.events.removeAllListeners();
 
     const sessionId = this._node.rest.sessionId;
@@ -890,6 +959,8 @@ export class Player<TTrack extends TrackData = TrackData> {
         // ignore destroy errors
       }
     }
+
+    this.kumo?.events?.emit("playerDestroy", this.guildId);
   }
 
   /** Gets whether player is destroyed */
