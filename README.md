@@ -59,16 +59,34 @@ Built for production: multi-node load balancing, automatic failover, distributed
 - High-level presets: `setBassBoost()`, `setNightcore()`, `setVaporwave()`, `setSlowedReverb()`, `set3DAudio()`, `setPitchShift()`, `setVoiceIsolation()`
 - Global custom named filter preset registry (`FilterChain.registerPreset()` / `applyPreset()`)
 
+**Resilience & Protection** <sup>new in 1.6</sup>
+- WebSocket heartbeat with pong-timeout detection — half-open dead node connections are terminated and auto-reconnected
+- Error-rate protection (`maxErrorsPerTime`) destroys runaway players; `minAutoPlayMs` stops autoplay error spam
+- `queueEmptyDestroyMs` auto-destroy timer after queue end, and standardized `DestroyReasons` on every `playerDestroy` event
+- Interpolated `player.position` between server updates, plus `player.ping` (`{ ws, lavalink }`)
+
+**Persistence** <sup>new in 1.6</sup>
+- Queue persistence (`queueOptions.persist`): every queue mutation auto-saves to your `StorageAdapter` (Memory/Redis) and restores after a restart
+- Full player state snapshots via `player.toJSON()`; queue change hook via `queue.onChanged`
+
 **Voice State & Smart Behaviors**
 - 24/7 Mode (`stayInVc`) to prevent channel disconnects on queue completion
 - Smart empty voice channel monitor (`setVcMemberCount()`) with configurable auto-pause and auto-disconnect timeouts
 - First-class gateway adapters for `discord.js` v14, `Eris`, `Seyfert`, `Oceanic.js`, `Davey`, and `Discordeno`
 
 **Lyrics, SponsorBlock & DX Utilities**
+- Server-side SponsorBlock plugin integration: `setSponsorBlock()` categories with `segmentsLoaded` / `segmentSkipped` / `chapterStarted` / `chaptersLoaded` events
+- Live lyrics via the LavaLyrics plugin: `getCurrentLyrics()`, `subscribeLyrics()` with `lyricsLine` / `lyricsFound` / `lyricsNotFound` events
 - Integrated LRCLIB synced lyrics (`getSyncedLyrics()`) with timestamp parser (`parseLrc()`)
 - SponsorBlock segment skipping helper (`SponsorBlockClient`) for skipping sponsor sections, intros, and outros
 - UI & Progress Bar helpers (`getProgressBar()`, `formatDuration()`, `createQueueEmbedData()`)
 - Middleware interceptor registry (`MiddlewareRegistry` / `useBeforeTrackStart`)
+
+**Control & Governance** <sup>new in 1.6</sup>
+- Rich play options: `play(track, { position, endTime, noReplace, paused, volume })`
+- Link policy: `linksAllowed`, `linksWhitelist`, `linksBlacklist` (string or RegExp) gate URL queries
+- Custom HTTP headers per manager or per node; custom `Player` subclass via `playerClass`
+- `player.moveNode()` least-loaded migration, `queue.sortBy()` / `queue.removeTrack()`, `setAudioOutput("mono" | "left" | "right")`, `parseLavalinkConnUrl()`
 
 **Plugins**
 - Pre-built wrappers for LavaSrc (Spotify, Apple Music, Deezer, Yandex Music), SponsorBlock segment filtering, and FloweryTTS
