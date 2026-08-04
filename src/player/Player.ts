@@ -1,16 +1,49 @@
 import type { Node } from "../node/Node.ts";
-import { Queue } from "../queue/Queue.ts";
+import { Queue, type SerializedQueue } from "../queue/Queue.ts";
 import { FilterChain } from "../filters/FilterChain.ts";
 import type { TrackData, PlayerState } from "../types/protocol.ts";
-import type { InternalVoiceState } from "../types/internal.ts";
+import type { InternalVoiceState, RepeatMode } from "../types/internal.ts";
 import { PlayerNotConnectedError, PlayerError } from "../errors/index.ts";
 import { EventDispatcher } from "../ws/EventDispatcher.ts";
 import type { EventName, EventCallback } from "../types/internal.ts";
+import { DestroyReasons } from "../types/constants.ts";
 
 import type { YuKumo } from "../Kumo.ts";
 import type { SearchResult } from "../types/internal.ts";
 
 export type PlayerStatus = "idle" | "playing" | "paused" | "destroyed";
+
+/** Options accepted by play()/playTrack() — mapped onto the Lavalink player PATCH */
+export interface PlayOptions {
+  /** Start position in milliseconds */
+  position?: number;
+  /** Stop playback at this track position in milliseconds */
+  endTime?: number | null;
+  /** If true, the node ignores the request when a track is already playing */
+  noReplace?: boolean;
+  /** Start paused */
+  paused?: boolean;
+  /** Volume to apply with this play request (0-1000) */
+  volume?: number;
+}
+
+/** Serializable snapshot of the full player state */
+export interface PlayerJson {
+  guildId: string;
+  voiceChannelId: string;
+  textChannelId: string | null;
+  status: PlayerStatus;
+  paused: boolean;
+  volume: number;
+  position: number;
+  repeatMode: RepeatMode;
+  autoplay: boolean;
+  stayInVc: boolean;
+  nodeId: string;
+  queue: SerializedQueue<TrackData>;
+  filters: Record<string, unknown>;
+  voiceState: InternalVoiceState;
+}
 
 export interface PlayerOptions {
   /** Target Discord Guild ID */
@@ -31,6 +64,14 @@ export interface PlayerOptions {
   emptyVcTimeoutMs?: number;
   /** Whether to pause playback instead of disconnecting when VC is empty */
   pauseWhenEmpty?: boolean;
+  /** Destroy the player when more than maxAmount track errors occur within threshold ms (null disables) */
+  maxErrorsPerTime?: { threshold: number; maxAmount: number } | null;
+  /** Minimum ms the last track must have played before error-triggered autoplay runs (0 disables) */
+  minAutoPlayMs?: number;
+  /** Destroy the player this many ms after the queue ends (0 disables; stayInVc overrides) */
+  queueEmptyDestroyMs?: number;
+  /** Persist the queue to the manager's storage adapter on every change */
+  persistQueue?: boolean;
   /** Reference to the main YuKumo client */
   kumo: YuKumo;
 }
@@ -58,8 +99,20 @@ export class Player<TTrack extends TrackData = TrackData> {
   public emptyVcTimeoutMs: number = 0;
   /** Whether to pause instead of disconnect when VC is empty */
   public pauseWhenEmpty: boolean = false;
+  /** Error-rate protection: destroy when more than maxAmount errors occur within threshold ms */
+  public maxErrorsPerTime: { threshold: number; maxAmount: number } | null = null;
+  /** Minimum ms the last track must have played before error-triggered autoplay runs */
+  public minAutoPlayMs: number = 0;
+  /** Destroy the player this many ms after the queue ends (0 disables) */
+  public queueEmptyDestroyMs: number = 0;
 
   private emptyVcTimer: ReturnType<typeof setTimeout> | null = null;
+  private queueEmptyTimer: ReturnType<typeof setTimeout> | null = null;
+  private _errorTimestamps: number[] = [];
+  private _lastTrackStartTs: number = 0;
+  private _lavalinkPing: number | null = null;
+  private _persistQueue: boolean = false;
+  private _queueSaveScheduled: boolean = false;
 
   private _node: Node;
   private readonly kumo: YuKumo;
@@ -90,6 +143,7 @@ export class Player<TTrack extends TrackData = TrackData> {
   private readonly boundOnTrackEnd = (guildId: string, track: TrackData, reason: string) => {
     if (guildId !== this.guildId) return;
     this.events.emit("trackEnd", guildId, track, reason);
+    if (reason === "loadFailed" && this.registerTrackError("error")) return;
     if (reason === "finished" || reason === "loadFailed") {
       this.queueTrackEndTask(track as TTrack, reason).catch(() => undefined);
     }
@@ -99,12 +153,15 @@ export class Player<TTrack extends TrackData = TrackData> {
     if (guildId !== this.guildId) return;
     this._status = "playing";
     this._paused = false;
+    this._lastTrackStartTs = Date.now();
+    this.cancelQueueEmptyDestroy();
     this.events.emit("trackStart", guildId, track);
   };
 
   private readonly boundOnTrackStuck = (guildId: string, track: TrackData, thresholdMs: number) => {
     if (guildId !== this.guildId) return;
     this.events.emit("trackStuck", guildId, track, thresholdMs);
+    if (this.registerTrackError("stuck")) return;
     this.queueTrackEndTask(track as TTrack, "stuck").catch(() => undefined);
   };
 
@@ -112,13 +169,55 @@ export class Player<TTrack extends TrackData = TrackData> {
     if (guildId !== this.guildId) return;
     this._position = state.position;
     this._positionTimestamp = Date.now();
+    if (typeof state.ping === "number" && state.ping >= 0) {
+      this._lavalinkPing = state.ping;
+    }
     this.events.emit("playerUpdate", guildId, state as never);
   };
 
   private readonly boundOnTrackException = (guildId: string, track: TrackData, exception: unknown) => {
     if (guildId !== this.guildId) return;
     this.events.emit("trackException", guildId, track, exception);
+    this.registerTrackError("error");
   };
+
+  /** Guild-scoped plugin events (SponsorBlock, LavaLyrics) re-emitted on player.events */
+  private static readonly pluginEventNames = [
+    "segmentsLoaded",
+    "segmentSkipped",
+    "chaptersLoaded",
+    "chapterStarted",
+    "lyricsFound",
+    "lyricsNotFound",
+    "lyricsLine",
+  ] as const;
+
+  private readonly boundPluginForwarders = new Map<string, (...args: unknown[]) => void>();
+
+  /**
+   * Sliding-window error-rate protection. Returns true when the limit was hit
+   * and the player is being destroyed — callers must stop advancing the queue.
+   */
+  private registerTrackError(kind: "error" | "stuck"): boolean {
+    const cfg = this.maxErrorsPerTime;
+    if (cfg == null || cfg.maxAmount <= 0 || cfg.threshold <= 0) return false;
+
+    const now = Date.now();
+    this._errorTimestamps.push(now);
+    this._errorTimestamps = this._errorTimestamps.filter((t) => now - t <= cfg.threshold);
+    if (this._errorTimestamps.length <= cfg.maxAmount) return false;
+
+    const reason =
+      kind === "stuck"
+        ? DestroyReasons.TrackStuckMaxTracksErroredPerTime
+        : DestroyReasons.TrackErrorMaxTracksErroredPerTime;
+    this.events.emit(
+      "debug",
+      `Player ${this.guildId} exceeded ${cfg.maxAmount} track errors within ${cfg.threshold}ms — destroying (${reason})`,
+    );
+    this.destroy(reason).catch(() => undefined);
+    return true;
+  }
 
   public constructor(options: PlayerOptions) {
     this.guildId = options.guildId;
@@ -131,11 +230,17 @@ export class Player<TTrack extends TrackData = TrackData> {
     this.stayInVc = options.stayInVc ?? false;
     this.emptyVcTimeoutMs = options.emptyVcTimeoutMs ?? 0;
     this.pauseWhenEmpty = options.pauseWhenEmpty ?? false;
+    this.maxErrorsPerTime = options.maxErrorsPerTime !== undefined ? options.maxErrorsPerTime : null;
+    this.minAutoPlayMs = options.minAutoPlayMs ?? 0;
+    this.queueEmptyDestroyMs = options.queueEmptyDestroyMs ?? 0;
     this.queue = new Queue<TTrack>();
     this.filters = new FilterChain();
     this.events = new EventDispatcher();
 
     this.setupNodeListeners();
+    if (options.persistQueue === true) {
+      this.enableQueuePersistence();
+    }
   }
 
   /** Gets active Lavalink Node */
@@ -229,6 +334,14 @@ export class Player<TTrack extends TrackData = TrackData> {
     ws.on("trackStuck", this.boundOnTrackStuck as never);
     ws.on("trackException", this.boundOnTrackException as never);
     ws.on("playerUpdate", this.boundOnPlayerUpdate as never);
+    for (const name of Player.pluginEventNames) {
+      const forwarder = (guildId: string, ...rest: unknown[]): void => {
+        if (guildId !== this.guildId) return;
+        (this.events.emit as (...a: unknown[]) => void)(name, guildId, ...rest);
+      };
+      this.boundPluginForwarders.set(name, forwarder as (...args: unknown[]) => void);
+      ws.on(name as never, forwarder as never);
+    }
   }
 
   private removeNodeListeners(): void {
@@ -238,6 +351,10 @@ export class Player<TTrack extends TrackData = TrackData> {
     ws.off("trackStuck", this.boundOnTrackStuck as never);
     ws.off("trackException", this.boundOnTrackException as never);
     ws.off("playerUpdate", this.boundOnPlayerUpdate as never);
+    for (const [name, forwarder] of this.boundPluginForwarders) {
+      ws.off(name as never, forwarder as never);
+    }
+    this.boundPluginForwarders.clear();
   }
 
   /** Consecutive queue-advance failures; guards against retry-looping a dead node or all-broken queue */
@@ -289,8 +406,17 @@ export class Player<TTrack extends TrackData = TrackData> {
       }
     }
 
+    // After an error end, require the track to have played at least minAutoPlayMs
+    // before autoplay kicks in — otherwise a broken source spams recommendations
+    const errorEnd = reason === "loadFailed" || reason === "stuck";
+    const autoplayBlocked =
+      errorEnd &&
+      this.minAutoPlayMs > 0 &&
+      this._lastTrackStartTs > 0 &&
+      Date.now() - this._lastTrackStartTs < this.minAutoPlayMs;
+
     // lastTrack is null when skip() fires with nothing playing — no seed for recommendations
-    if (this.autoplay && lastTrack != null) {
+    if (this.autoplay && lastTrack != null && !autoplayBlocked) {
       try {
         let autoTrack: TTrack | null = null;
         if (this.autoplayFetcher != null) {
@@ -327,6 +453,26 @@ export class Player<TTrack extends TrackData = TrackData> {
     this._status = "idle";
     this._paused = false;
     this.events.emit("queueEnd", this.guildId);
+    this.scheduleQueueEmptyDestroy();
+  }
+
+  /** Destroys the player after queueEmptyDestroyMs of an ended queue (24/7 mode wins) */
+  private scheduleQueueEmptyDestroy(): void {
+    if (this.queueEmptyDestroyMs <= 0 || this.stayInVc || this._destroyed) return;
+    this.cancelQueueEmptyDestroy();
+    this.queueEmptyTimer = setTimeout(() => {
+      this.queueEmptyTimer = null;
+      if (this._destroyed || this._status === "playing") return;
+      this.destroy(DestroyReasons.QueueEmpty).catch(() => undefined);
+    }, this.queueEmptyDestroyMs);
+    (this.queueEmptyTimer as { unref?: () => void }).unref?.();
+  }
+
+  private cancelQueueEmptyDestroy(): void {
+    if (this.queueEmptyTimer != null) {
+      clearTimeout(this.queueEmptyTimer);
+      this.queueEmptyTimer = null;
+    }
   }
 
   /** Gets whether autoplay is currently enabled */
@@ -367,7 +513,7 @@ export class Player<TTrack extends TrackData = TrackData> {
             this.events.emit("playerAutoPaused", this.guildId);
           } else if (!this.stayInVc) {
             this.events.emit("playerAutoDisconnected", this.guildId);
-            this.destroy().catch(() => undefined);
+            this.destroy(DestroyReasons.EmptyVoiceChannel).catch(() => undefined);
           }
         }, this.emptyVcTimeoutMs);
         // Don't let an idle-VC countdown keep the process alive
@@ -495,6 +641,146 @@ export class Player<TTrack extends TrackData = TrackData> {
     return this.kumo.getLyrics(trackToUse);
   }
 
+  /**
+   * Sets SponsorBlock categories to auto-skip (requires the SponsorBlock
+   * plugin on the node). Emits segmentsLoaded/segmentSkipped/chapterStarted/
+   * chaptersLoaded events on this player.
+   */
+  public async setSponsorBlock(categories: string[] = ["sponsor", "selfpromo"]): Promise<void> {
+    if (this._destroyed) throw new PlayerError("Player is destroyed", this.guildId);
+    await this._node.rest.setSponsorBlockCategories(this._node.rest.sessionId, this.guildId, categories);
+  }
+
+  /** Gets the SponsorBlock categories configured for this player on the node */
+  public async getSponsorBlock(): Promise<string[]> {
+    if (this._destroyed) throw new PlayerError("Player is destroyed", this.guildId);
+    return this._node.rest.getSponsorBlockCategories(this._node.rest.sessionId, this.guildId);
+  }
+
+  /** Clears the SponsorBlock categories for this player on the node */
+  public async deleteSponsorBlock(): Promise<void> {
+    if (this._destroyed) throw new PlayerError("Player is destroyed", this.guildId);
+    await this._node.rest.deleteSponsorBlockCategories(this._node.rest.sessionId, this.guildId);
+  }
+
+  /** Fetches lyrics of the currently playing track via the node's LavaLyrics plugin */
+  public async getCurrentLyrics(skipTrackSource: boolean = false): Promise<unknown> {
+    if (this._destroyed) throw new PlayerError("Player is destroyed", this.guildId);
+    return this._node.rest.getCurrentLyrics(this._node.rest.sessionId, this.guildId, skipTrackSource);
+  }
+
+  /**
+   * Subscribes to live lyrics for this guild — the node then emits
+   * lyricsFound/lyricsNotFound/lyricsLine events (LavaLyrics plugin required).
+   */
+  public async subscribeLyrics(skipTrackSource: boolean = false): Promise<void> {
+    if (this._destroyed) throw new PlayerError("Player is destroyed", this.guildId);
+    await this._node.rest.subscribeLyrics(this._node.rest.sessionId, this.guildId, skipTrackSource);
+  }
+
+  /** Unsubscribes from live lyrics events for this guild */
+  public async unsubscribeLyrics(): Promise<void> {
+    if (this._destroyed) throw new PlayerError("Player is destroyed", this.guildId);
+    await this._node.rest.unsubscribeLyrics(this._node.rest.sessionId, this.guildId);
+  }
+
+  /**
+   * Moves the player to another node. Without an id, picks the connected node
+   * with the fewest players (excluding the current one).
+   */
+  public async moveNode(nodeId?: string): Promise<Node> {
+    if (this._destroyed) throw new PlayerError("Player is destroyed", this.guildId);
+
+    let target: Node | undefined;
+    if (nodeId != null) {
+      target = this.kumo.nodes.get(nodeId);
+      if (target == null) throw new PlayerError(`Node "${nodeId}" does not exist`, this.guildId);
+    } else {
+      target = this.kumo.nodes
+        .getAll()
+        .filter((n) => n.state === "connected" && n.id !== this._node.id)
+        .sort((a, b) => a.playerCount - b.playerCount)[0];
+      if (target == null) throw new PlayerError("No eligible node to move to", this.guildId);
+    }
+
+    if (target.id === this._node.id) return this._node;
+    await this.setNode(target);
+    return target;
+  }
+
+  /** Latest measured latencies: node WS ping and per-player Lavalink ping */
+  public get ping(): { ws: number | null; lavalink: number | null } {
+    return { ws: this._node.ping, lavalink: this._lavalinkPing };
+  }
+
+  /** Serializes the complete player state (queue, filters, voice, playback) */
+  public toJSON(): PlayerJson {
+    return {
+      guildId: this.guildId,
+      voiceChannelId: this._voiceChannelId,
+      textChannelId: this._textChannelId,
+      status: this._status,
+      paused: this._paused,
+      volume: this._volume,
+      position: this.position,
+      repeatMode: this.queue.repeatMode,
+      autoplay: this.autoplay,
+      stayInVc: this.stayInVc,
+      nodeId: this._node.id,
+      queue: this.queue.export() as SerializedQueue<TrackData>,
+      filters: this.filters.toPayload() as Record<string, unknown>,
+      voiceState: this.voiceState,
+    };
+  }
+
+  private get queueStorageKey(): string {
+    return `yukumo:queue:${this.guildId}`;
+  }
+
+  /**
+   * Persists the queue to the manager's storage adapter on every mutation
+   * (microtask-coalesced), enabling queue restore across restarts.
+   */
+  public enableQueuePersistence(): void {
+    if (this.kumo?.storage == null) return;
+    this._persistQueue = true;
+    this.queue.onChanged = () => this.scheduleQueueSave();
+  }
+
+  private scheduleQueueSave(): void {
+    if (!this._persistQueue || this._destroyed || this._queueSaveScheduled) return;
+    this._queueSaveScheduled = true;
+    queueMicrotask(() => {
+      this._queueSaveScheduled = false;
+      if (this._destroyed) return;
+      void Promise.resolve(this.kumo.storage.set(this.queueStorageKey, this.queue.export())).catch(
+        (err: unknown) => {
+          this.events.emit(
+            "debug",
+            `Failed to persist queue for guild ${this.guildId}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        },
+      );
+    });
+  }
+
+  /** Restores a previously persisted queue from the storage adapter. Returns true when restored. */
+  public async restoreQueue(): Promise<boolean> {
+    if (this.kumo?.storage == null) return false;
+    try {
+      const stored = await this.kumo.storage.get(this.queueStorageKey);
+      if (stored == null) return false;
+      this.queue.import(stored as SerializedQueue<TTrack>);
+      return true;
+    } catch (err) {
+      this.events.emit(
+        "debug",
+        `Failed to restore queue for guild ${this.guildId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return false;
+    }
+  }
+
   /** Whether complete voice credentials (token + endpoint + sessionId) are held */
   public get hasVoiceCredentials(): boolean {
     return (
@@ -563,7 +849,7 @@ export class Player<TTrack extends TrackData = TrackData> {
   /**
    * Begins playback of the given track. If none provided, plays next in queue.
    */
-  public async play(track?: TrackData): Promise<void> {
+  public async play(track?: TrackData, options?: PlayOptions): Promise<void> {
     if (this._destroyed) throw new PlayerError("Player is destroyed", this.guildId);
 
     const trackToPlay = (track as TTrack) ?? this.queue.currentTrack ?? this.queue.start();
@@ -571,11 +857,11 @@ export class Player<TTrack extends TrackData = TrackData> {
       throw new PlayerError("No tracks in queue", this.guildId);
     }
 
-    await this.playTrack(trackToPlay);
+    await this.playTrack(trackToPlay, options);
   }
 
   /** Plays a specific track directly */
-  public async playTrack(track: TTrack, options?: { position?: number }): Promise<void> {
+  public async playTrack(track: TTrack, options?: PlayOptions): Promise<void> {
     if (this._destroyed) throw new PlayerError("Player is destroyed", this.guildId);
 
     const filterPayload = this.filters.toPayload();
@@ -607,20 +893,27 @@ export class Player<TTrack extends TrackData = TrackData> {
 
       await this.sendVoiceUpdate();
 
+      const volume = options?.volume != null ? Math.max(0, Math.min(1000, options.volume)) : this._volume;
+      const paused = options?.paused ?? this._paused;
+
       await this._node.rest.updatePlayer(
         sessionId,
         this.guildId,
         {
           track: { encoded: track.encoded },
           position: options?.position,
-          volume: this._volume,
-          paused: this._paused,
+          endTime: options?.endTime,
+          volume,
+          paused,
           filters: hasFilterKeys ? filterPayload : undefined,
         },
-        false,
+        options?.noReplace ?? false,
       );
+      this._volume = volume;
+      this._paused = paused;
       this._position = options?.position ?? 0;
       this._positionTimestamp = Date.now();
+      this.cancelQueueEmptyDestroy();
     } catch (error) {
       this._status = previousStatus === "playing" ? "idle" : previousStatus;
       throw error;
@@ -931,13 +1224,17 @@ export class Player<TTrack extends TrackData = TrackData> {
    * removes event listeners, and unregisters itself from the PlayerManager.
    * Safe to call directly (e.g. from auto-disconnect) — manager map and node
    * playerCount stay consistent either way.
+   * @param reason A DestroyReasons value (or free-form string) emitted with "playerDestroy".
+   * With reason DisconnectAllNodes (client shutdown), a persisted queue is kept
+   * on disk so it can be restored after a restart.
    */
-  public async destroy(): Promise<void> {
+  public async destroy(reason: string = DestroyReasons.ManualDestroy): Promise<void> {
     if (this._destroyed) return;
     if (this.emptyVcTimer != null) {
       clearTimeout(this.emptyVcTimer);
       this.emptyVcTimer = null;
     }
+    this.cancelQueueEmptyDestroy();
     this.sendVoiceStateToDiscord(null);
     this._destroyed = true;
     this._status = "destroyed";
@@ -951,6 +1248,10 @@ export class Player<TTrack extends TrackData = TrackData> {
     this.data.clear();
     this.events.removeAllListeners();
 
+    if (this._persistQueue && reason !== DestroyReasons.DisconnectAllNodes) {
+      void Promise.resolve(this.kumo.storage.delete(this.queueStorageKey)).catch(() => undefined);
+    }
+
     const sessionId = this._node.rest.sessionId;
     if (sessionId != null) {
       try {
@@ -960,7 +1261,7 @@ export class Player<TTrack extends TrackData = TrackData> {
       }
     }
 
-    this.kumo?.events?.emit("playerDestroy", this.guildId);
+    this.kumo?.events?.emit("playerDestroy", this.guildId, reason);
   }
 
   /** Gets whether player is destroyed */

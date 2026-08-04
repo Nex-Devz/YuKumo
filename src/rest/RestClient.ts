@@ -47,6 +47,8 @@ export interface RestClientOptions {
   retryOptions?: RetryOptions;
   /** REST response caching options */
   cacheOptions?: RestCacheOptions;
+  /** Custom HTTP headers merged into every request (cannot override Authorization) */
+  httpHeaders?: Record<string, string>;
 }
 
 interface CacheEntry<T> {
@@ -83,6 +85,7 @@ export class RestClient {
   private readonly cacheTtlMs: number;
   private readonly cacheMaxEntries: number;
   private readonly responseCache = new Map<string, CacheEntry<unknown>>();
+  private readonly httpHeaders?: Record<string, string>;
   private _sessionId: string | null;
 
   public constructor(options: RestClientOptions) {
@@ -90,6 +93,7 @@ export class RestClient {
     this.password = options.password;
     this.timeout = options.timeout ?? 15000;
     this.retryOptions = options.retryOptions;
+    this.httpHeaders = options.httpHeaders;
     this._sessionId = options.sessionId ?? null;
 
     this.cacheEnabled = options.cacheOptions?.enabled ?? true;
@@ -114,10 +118,12 @@ export class RestClient {
 
   private buildHeaders(): Record<string, string> {
     return {
-      Authorization: this.password,
       "Content-Type": "application/json",
       Accept: "application/json",
       "User-Agent": "YuKumo/0.0.1",
+      ...this.httpHeaders,
+      // Authorization last — custom headers must not override node auth
+      Authorization: this.password,
     };
   }
 
@@ -452,6 +458,83 @@ export class RestClient {
       params.types = types.join(",");
     }
     return this.request<LavaSearchResult>("GET", "/lavasearch", undefined, params);
+  }
+
+  /**
+   * Gets the SponsorBlock categories configured for a guild's player.
+   * Requires the SponsorBlock plugin on the node.
+   */
+  public async getSponsorBlockCategories(
+    sessionId: string | null,
+    guildId: string,
+  ): Promise<string[]> {
+    const sid = this.resolveSessionId(sessionId, `/sessions/-/players/${guildId}/sponsorblock/categories`);
+    return this.request<string[]>("GET", `/sessions/${sid}/players/${guildId}/sponsorblock/categories`);
+  }
+
+  /**
+   * Sets the SponsorBlock categories to auto-skip for a guild's player.
+   * Requires the SponsorBlock plugin on the node.
+   */
+  public async setSponsorBlockCategories(
+    sessionId: string | null,
+    guildId: string,
+    categories: string[],
+  ): Promise<void> {
+    const sid = this.resolveSessionId(sessionId, `/sessions/-/players/${guildId}/sponsorblock/categories`);
+    return this.request<void>(
+      "PUT",
+      `/sessions/${sid}/players/${guildId}/sponsorblock/categories`,
+      categories,
+    );
+  }
+
+  /**
+   * Clears the SponsorBlock categories for a guild's player.
+   * Requires the SponsorBlock plugin on the node.
+   */
+  public async deleteSponsorBlockCategories(sessionId: string | null, guildId: string): Promise<void> {
+    const sid = this.resolveSessionId(sessionId, `/sessions/-/players/${guildId}/sponsorblock/categories`);
+    return this.request<void>("DELETE", `/sessions/${sid}/players/${guildId}/sponsorblock/categories`);
+  }
+
+  /**
+   * Fetches lyrics of the track currently playing on a guild's player.
+   * Requires the LavaLyrics plugin on the node.
+   */
+  public async getCurrentLyrics(
+    sessionId: string | null,
+    guildId: string,
+    skipTrackSource: boolean = false,
+  ): Promise<unknown> {
+    const sid = this.resolveSessionId(sessionId, `/sessions/-/players/${guildId}/track/lyrics`);
+    return this.request<unknown>("GET", `/sessions/${sid}/players/${guildId}/track/lyrics`, undefined, {
+      skipTrackSource: String(skipTrackSource),
+    });
+  }
+
+  /**
+   * Subscribes to live lyrics events (lyricsFound/lyricsNotFound/lyricsLine)
+   * for a guild's player. Requires the LavaLyrics plugin on the node.
+   */
+  public async subscribeLyrics(
+    sessionId: string | null,
+    guildId: string,
+    skipTrackSource: boolean = false,
+  ): Promise<void> {
+    const sid = this.resolveSessionId(sessionId, `/sessions/-/players/${guildId}/lyrics/subscribe`);
+    return this.request<void>("POST", `/sessions/${sid}/players/${guildId}/lyrics/subscribe`, undefined, {
+      skipTrackSource: String(skipTrackSource),
+    });
+  }
+
+  /**
+   * Unsubscribes from live lyrics events for a guild's player.
+   * Requires the LavaLyrics plugin on the node.
+   */
+  public async unsubscribeLyrics(sessionId: string | null, guildId: string): Promise<void> {
+    const sid = this.resolveSessionId(sessionId, `/sessions/-/players/${guildId}/lyrics/subscribe`);
+    return this.request<void>("DELETE", `/sessions/${sid}/players/${guildId}/lyrics/subscribe`);
   }
 
   /**

@@ -48,6 +48,7 @@ export class Node {
       password: config.password,
       secure: config.secure,
       sessionId: config.resumeKey,
+      httpHeaders: config.httpHeaders,
       retryOptions: {
         maxRetries: config.maxRetries ?? 3,
         baseDelay: config.retryDelay ?? 1000,

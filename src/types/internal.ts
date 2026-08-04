@@ -14,6 +14,14 @@ export interface NodeConfig {
   retryDelayMax?: number;
   /** Milliseconds to wait for the WebSocket handshake before failing connect() (default 15000) */
   connectTimeout?: number;
+  /** Custom HTTP headers sent with every REST request and the WS handshake to this node */
+  httpHeaders?: Record<string, string>;
+  /** Whether to send WS heartbeat pings to detect dead connections (default true) */
+  enableHeartbeat?: boolean;
+  /** Interval between WS heartbeat pings in milliseconds (default 30000) */
+  heartbeatIntervalMs?: number;
+  /** Time to wait for a pong before declaring the connection dead (default 10000) */
+  heartbeatTimeoutMs?: number;
 }
 
 export interface NodeStats {
@@ -95,6 +103,34 @@ export interface ManagerOptions {
   voiceConnectionTimeout?: number;
   /** Number of voice connection retry attempts before throwing (default 0) */
   voiceConnectionRetries?: number;
+  /** If false, URL queries are rejected with an error load result (default true) */
+  linksAllowed?: boolean;
+  /** When non-empty, URL queries must match at least one entry (string substring or RegExp) */
+  linksWhitelist?: (RegExp | string)[];
+  /** URL queries matching any entry are rejected, even if whitelisted */
+  linksBlacklist?: (RegExp | string)[];
+  /** Custom HTTP headers applied to every node's REST requests and WS handshake */
+  httpHeaders?: Record<string, string>;
+  /** Queue behavior applied to every player's queue */
+  queueOptions?: {
+    /** Persist queues to the configured storage adapter and restore them on player create (default false) */
+    persist?: boolean;
+    /** Maximum number of history entries per queue (default 50) */
+    maxHistorySize?: number;
+  };
+  /** Custom Player subclass instantiated by PlayerManager.create (extendable player) */
+  playerClass?: new (
+    options: import("../player/Player.ts").PlayerOptions,
+  ) => import("../player/Player.ts").Player;
+  /** Default per-player protection/behavior options applied on player create */
+  playerDefaults?: {
+    /** Destroy the player when more than maxAmount track errors occur within threshold ms (default { threshold: 35000, maxAmount: 3 }; set null to disable) */
+    maxErrorsPerTime?: { threshold: number; maxAmount: number } | null;
+    /** Minimum ms the last track must have played before autoplay runs — prevents error spam (default 10000, 0 disables) */
+    minAutoPlayMs?: number;
+    /** Destroy the player this many ms after the queue ends (0/undefined disables; stayInVc overrides) */
+    queueEmptyDestroyMs?: number;
+  };
 }
 
 export type RepeatMode = "none" | "track" | "queue";
@@ -159,7 +195,7 @@ export type EventMap = {
   nodeReconnected: (nodeId: string) => void;
   nodeError: (nodeId: string, error: Error) => void;
   playerCreate: (guildId: string) => void;
-  playerDestroy: (guildId: string) => void;
+  playerDestroy: (guildId: string, reason?: string) => void;
   playerMove: (guildId: string, fromNode: string, toNode: string) => void;
   /** Emitted when the bot disconnects from a voice channel */
   playerDisconnect: (guildId: string, reason: string) => void;
@@ -188,6 +224,20 @@ export type EventMap = {
   autoplayTrackAdded: (guildId: string, track: TrackData) => void;
   playerAutoPaused: (guildId: string) => void;
   playerAutoDisconnected: (guildId: string) => void;
+  /** SponsorBlock plugin: segments for the current track were loaded */
+  segmentsLoaded: (guildId: string, segments: unknown[]) => void;
+  /** SponsorBlock plugin: a segment was skipped */
+  segmentSkipped: (guildId: string, segment: unknown) => void;
+  /** SponsorBlock plugin: chapters for the current track were loaded */
+  chaptersLoaded: (guildId: string, chapters: unknown[]) => void;
+  /** SponsorBlock plugin: a chapter started */
+  chapterStarted: (guildId: string, chapter: unknown) => void;
+  /** Lyrics plugin: lyrics were found for the current track */
+  lyricsFound: (guildId: string, lyrics: unknown) => void;
+  /** Lyrics plugin: no lyrics were found for the current track */
+  lyricsNotFound: (guildId: string) => void;
+  /** Lyrics plugin: a live lyrics line was emitted */
+  lyricsLine: (guildId: string, line: unknown) => void;
 };
 
 export type EventName = keyof EventMap;

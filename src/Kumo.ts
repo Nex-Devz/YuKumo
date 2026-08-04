@@ -23,7 +23,7 @@ import type {
   EventCallback,
 } from "./types/internal.ts";
 import type { TrackData, LoadResult, LavaSearchType, LavaSearchResult } from "./types/protocol.ts";
-import { LoadTypeMap } from "./types/constants.ts";
+import { LoadTypeMap, DestroyReasons } from "./types/constants.ts";
 
 export interface YuKumoPlayerCreateOptions {
   guildId: string;
@@ -127,6 +127,16 @@ export class YuKumo {
   private _userId: string;
   private readonly pendingPlayerCreates = new Map<string, Promise<Player>>();
   private readonly adapters = new Set<{ destroy(): void }>();
+  /** Custom Player subclass used by PlayerManager.create */
+  public readonly playerClass?: ManagerOptions["playerClass"];
+  /** URL query gatekeeping (see ManagerOptions.linksAllowed/linksWhitelist/linksBlacklist) */
+  private readonly linksAllowed: boolean;
+  private readonly linksWhitelist: (RegExp | string)[];
+  private readonly linksBlacklist: (RegExp | string)[];
+  /** Per-player defaults applied on createPlayer */
+  private readonly playerDefaults: NonNullable<ManagerOptions["playerDefaults"]>;
+  /** Queue behavior defaults (persistence) */
+  private readonly queueOptions: NonNullable<ManagerOptions["queueOptions"]>;
 
   public constructor(options: ManagerOptions) {
     this._userId = options.userId ?? "";
@@ -143,6 +153,19 @@ export class YuKumo {
     this.storage = options.storageAdapter ?? new MemoryStorage();
     this.voiceConnectionTimeout = options.voiceConnectionTimeout ?? 15000;
     this.voiceConnectionRetries = options.voiceConnectionRetries ?? 0;
+    this.playerClass = options.playerClass;
+    this.linksAllowed = options.linksAllowed ?? true;
+    this.linksWhitelist = options.linksWhitelist ?? [];
+    this.linksBlacklist = options.linksBlacklist ?? [];
+    this.playerDefaults = {
+      maxErrorsPerTime:
+        options.playerDefaults?.maxErrorsPerTime !== undefined
+          ? options.playerDefaults.maxErrorsPerTime
+          : { threshold: 35000, maxAmount: 3 },
+      minAutoPlayMs: options.playerDefaults?.minAutoPlayMs ?? 10000,
+      queueEmptyDestroyMs: options.playerDefaults?.queueEmptyDestroyMs ?? 0,
+    };
+    this.queueOptions = { persist: options.queueOptions?.persist ?? false };
     this.events = new EventDispatcher();
     this.voice = new VoiceStateTracker(this.events);
     this.searchCache = new SearchCache();
@@ -162,7 +185,7 @@ export class YuKumo {
       );
     };
 
-    this.registerNodes(options.nodes);
+    this.registerNodes(options.nodes, options.httpHeaders);
     this.registerPlugins(options.plugins);
   }
 
@@ -198,7 +221,8 @@ export class YuKumo {
       }
     }
     this.adapters.clear();
-    await this.players.destroyAll();
+    // DisconnectAllNodes keeps persisted queues on disk so restarts can restore them
+    await this.players.destroyAll(DestroyReasons.DisconnectAllNodes);
     await this.nodes.destroyAll();
     await this.plugins.destroyAll();
     for (const guildId of this.voice.getAll().map((s) => s.guildId)) {
@@ -224,6 +248,16 @@ export class YuKumo {
   public async search(queryOrOptions: string | SearchOptions, source?: string): Promise<SearchResult> {
     const resolved: SearchOptions =
       typeof queryOrOptions === "string" ? { query: queryOrOptions, source } : queryOrOptions;
+
+    const linkError = this.checkLinkPolicy(resolved.query);
+    if (linkError != null) {
+      return {
+        loadType: "error",
+        type: LoadTypeMap["error"],
+        tracks: [],
+        exception: { message: linkError, severity: "common", cause: "link policy" },
+      };
+    }
 
     const hookResult = await this.plugins.runBeforeSearch(resolved.query, resolved.source);
     if (hookResult === null) {
@@ -271,6 +305,28 @@ export class YuKumo {
         },
       };
     }
+  }
+
+  /**
+   * Applies the link policy (linksAllowed / linksWhitelist / linksBlacklist) to
+   * URL queries. Returns an error message when the query is rejected, else null.
+   */
+  private checkLinkPolicy(query: string): string | null {
+    if (!/^https?:\/\//i.test(query)) return null;
+
+    const matches = (entry: RegExp | string): boolean =>
+      entry instanceof RegExp ? entry.test(query) : query.includes(entry);
+
+    if (!this.linksAllowed) {
+      return "Link requests are disabled (linksAllowed: false)";
+    }
+    if (this.linksBlacklist.length > 0 && this.linksBlacklist.some(matches)) {
+      return "Link is blacklisted";
+    }
+    if (this.linksWhitelist.length > 0 && !this.linksWhitelist.some(matches)) {
+      return "Link does not match the whitelist";
+    }
+    return null;
   }
 
   /**
@@ -361,7 +417,15 @@ export class YuKumo {
       textChannelId: options.textChannelId,
       selfDeaf: options.selfDeaf,
       selfMute: options.selfMute,
+      maxErrorsPerTime: this.playerDefaults.maxErrorsPerTime,
+      minAutoPlayMs: this.playerDefaults.minAutoPlayMs,
+      queueEmptyDestroyMs: this.playerDefaults.queueEmptyDestroyMs,
+      persistQueue: this.queueOptions.persist,
     });
+
+    if (this.queueOptions.persist === true) {
+      await player.restoreQueue();
+    }
 
     const existingVoice = this.voice.getVoiceState(options.guildId);
     if (existingVoice != null) {
@@ -451,13 +515,13 @@ export class YuKumo {
   }
 
   /** Destroys player for a guild */
-  public async destroyPlayer(guildId: string): Promise<boolean> {
+  public async destroyPlayer(guildId: string, reason?: string): Promise<boolean> {
     const shouldDestroy = await this.plugins.runBeforeDestroy(guildId);
     if (!shouldDestroy) return false;
 
     // Player.destroy() emits the global "playerDestroy" event exactly once,
     // covering both this path and direct player.destroy() calls
-    const result = await this.players.destroy(guildId);
+    const result = await this.players.destroy(guildId, reason);
     if (result) {
       await this.plugins.runAfterDestroy(guildId);
     }
@@ -522,13 +586,13 @@ export class YuKumo {
           "debug",
           `Auto-reconnect failed for guild ${guildId}: ${err instanceof Error ? err.message : String(err)}`,
         );
-        await this.destroyPlayer(guildId);
+        await this.destroyPlayer(guildId, DestroyReasons.PlayerReconnectFail);
         return;
       }
     }
 
     if (this.onDisconnect.destroyPlayer) {
-      await this.destroyPlayer(guildId);
+      await this.destroyPlayer(guildId, DestroyReasons.Disconnected);
     }
   }
 
@@ -542,7 +606,7 @@ export class YuKumo {
     if (player.voiceChannelId !== channelId) return;
 
     this.events.emit("debug", `Voice channel ${channelId} deleted, destroying player for guild ${guildId}`);
-    await this.destroyPlayer(guildId);
+    await this.destroyPlayer(guildId, DestroyReasons.ChannelDeleted);
   }
 
   /** Processes raw Discord VOICE_SERVER_UPDATE gateway event */
@@ -627,9 +691,13 @@ export class YuKumo {
     return this;
   }
 
-  private registerNodes(configs: NodeConfig[]): void {
+  private registerNodes(configs: NodeConfig[], httpHeaders?: Record<string, string>): void {
     for (const config of configs) {
-      const node = this.nodes.add(config);
+      const merged =
+        httpHeaders != null
+          ? { ...config, httpHeaders: { ...httpHeaders, ...config.httpHeaders } }
+          : config;
+      const node = this.nodes.add(merged);
       this.bindNodeEvents(node);
     }
   }
@@ -673,6 +741,19 @@ export class YuKumo {
       (guildId: string, state: { time: number; position: number; connected: boolean; ping: number }) =>
         this.events.emit("playerUpdate", guildId, state),
     );
+    // Server-plugin events (SponsorBlock, LavaLyrics) — forwarded globally
+    for (const name of [
+      "segmentsLoaded",
+      "segmentSkipped",
+      "chaptersLoaded",
+      "chapterStarted",
+      "lyricsFound",
+      "lyricsNotFound",
+      "lyricsLine",
+    ] as const) {
+      ws.on(name as EventName, ((...args: unknown[]) =>
+        (this.events.emit as (...a: unknown[]) => void)(name, ...args)) as never);
+    }
   }
 
   /**

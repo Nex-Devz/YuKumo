@@ -15,6 +15,19 @@ import type { FiltersObject } from "../types/protocol.ts";
 
 export type BassBoostLevel = "low" | "medium" | "high" | "extreme";
 
+export type AudioOutput = "mono" | "stereo" | "left" | "right";
+
+/** ChannelMix presets for routing audio output — mirrors lavalink-client's audioOutputsData */
+export const AudioOutputs: Record<
+  AudioOutput,
+  { leftToLeft: number; leftToRight: number; rightToLeft: number; rightToRight: number }
+> = {
+  mono: { leftToLeft: 0.5, leftToRight: 0.5, rightToLeft: 0.5, rightToRight: 0.5 },
+  stereo: { leftToLeft: 1, leftToRight: 0, rightToLeft: 0, rightToRight: 1 },
+  left: { leftToLeft: 1, leftToRight: 0, rightToLeft: 1, rightToRight: 0 },
+  right: { leftToLeft: 0, leftToRight: 1, rightToLeft: 0, rightToRight: 1 },
+};
+
 /**
  * Manages an active chain of Lavalink audio filters and provides preset shortcuts.
  */
@@ -277,6 +290,18 @@ export class FilterChain {
     const eq = new EqualizerFilter();
     gains.forEach((gain, band) => eq.setBand(band, gain));
     return this.add(eq);
+  }
+
+  /**
+   * Routes audio output via a ChannelMix preset: "mono", "stereo" (reset),
+   * "left", or "right".
+   */
+  public setAudioOutput(output: AudioOutput): this {
+    if (output === "stereo") {
+      this.remove("channelMix");
+      return this;
+    }
+    return this.add(new ChannelMixFilter(AudioOutputs[output]));
   }
 
   private static readonly presetRegistry: Map<string, FiltersObject> = new Map();

@@ -4,6 +4,8 @@ import { PlayerManager } from "./PlayerManager.ts";
 import { Node } from "../node/Node.ts";
 import { VolumeFilter } from "../filters/Filters.ts";
 import { EventDispatcher } from "../ws/EventDispatcher.ts";
+import { MemoryStorage } from "../storage/MemoryStorage.ts";
+import { DestroyReasons } from "../types/constants.ts";
 import type { YuKumo } from "../Kumo.ts";
 import type { TrackData } from "../types/protocol.ts";
 
@@ -413,12 +415,19 @@ function makeLiveNode(id = "live-node") {
     id,
     playerCount: 0,
     state: "connected",
+    ping: 42,
     ws: { eventDispatcher: new EventDispatcher() },
     rest: {
       sessionId: "lava-session" as string | null,
       updatePlayer: vi.fn().mockResolvedValue({}),
       destroyPlayer: vi.fn().mockResolvedValue(undefined),
       loadTracks: vi.fn().mockResolvedValue({ loadType: "empty", data: null }),
+      setSponsorBlockCategories: vi.fn().mockResolvedValue(undefined),
+      getSponsorBlockCategories: vi.fn().mockResolvedValue(["sponsor"]),
+      deleteSponsorBlockCategories: vi.fn().mockResolvedValue(undefined),
+      subscribeLyrics: vi.fn().mockResolvedValue(undefined),
+      unsubscribeLyrics: vi.fn().mockResolvedValue(undefined),
+      getCurrentLyrics: vi.fn().mockResolvedValue({ text: "la" }),
     },
   };
 }
@@ -428,6 +437,7 @@ function makeMockKumo() {
     events: new EventDispatcher(),
     voice: { getVoiceState: () => null },
     sendGatewayPayload: vi.fn(),
+    storage: new MemoryStorage(),
   } as unknown as YuKumo;
   (kumo as { players: PlayerManager }).players = new PlayerManager(kumo);
   return kumo;

@@ -73,6 +73,32 @@ export function generateSnowflake(): string {
 
 export function noop(): void {}
 
+/**
+ * Parses a lavalink connection URL of the form
+ * `lavalink://<name>:<password>@<host>:<port>` (also accepts http/https/ws/wss,
+ * where the scheme sets `secure`). Mirrors lavalink-client's parseLavalinkConnUrl.
+ */
+export function parseLavalinkConnUrl(connectionUrl: string): {
+  name: string;
+  password: string;
+  host: string;
+  port: number;
+  secure: boolean;
+} {
+  const url = new URL(connectionUrl.replace(/^lavalink:\/\//i, "http://"));
+  const port = Number(url.port);
+  if (!url.hostname || Number.isNaN(port) || port <= 0) {
+    throw new Error(`Invalid lavalink connection url: ${connectionUrl}`);
+  }
+  return {
+    name: decodeURIComponent(url.username) || url.hostname,
+    password: decodeURIComponent(url.password),
+    host: url.hostname,
+    port,
+    secure: /^(https|wss):\/\//i.test(connectionUrl),
+  };
+}
+
 export function isPromise(value: unknown): value is Promise<unknown> {
   return (
     typeof value === "object" && value !== null && typeof (value as Promise<unknown>).then === "function"

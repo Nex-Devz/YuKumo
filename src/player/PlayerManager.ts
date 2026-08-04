@@ -18,7 +18,9 @@ export class PlayerManager {
     }
 
     const playerOptions: PlayerOptions = { ...options, kumo: this.kumo };
-    const player = new Player(playerOptions);
+    const PlayerCtor =
+      (this.kumo as { playerClass?: new (options: PlayerOptions) => Player }).playerClass ?? Player;
+    const player = new PlayerCtor(playerOptions);
     this.players.set(options.guildId, player);
     options.node.playerCount += 1;
     return player;
@@ -45,12 +47,12 @@ export class PlayerManager {
     return this.players.has(guildId);
   }
 
-  public async destroy(guildId: string): Promise<boolean> {
+  public async destroy(guildId: string, reason?: string): Promise<boolean> {
     const player = this.players.get(guildId);
     if (player === undefined) return false;
 
     // Player.destroy() uncaches itself and adjusts node playerCount
-    await player.destroy();
+    await player.destroy(reason);
     this.players.delete(guildId);
     return true;
   }
@@ -63,9 +65,9 @@ export class PlayerManager {
     return this.getAll().filter((p) => p.node.id === nodeId);
   }
 
-  public async destroyAll(): Promise<void> {
+  public async destroyAll(reason?: string): Promise<void> {
     const promises = Array.from(this.players.entries()).map(async ([guildId]) => {
-      await this.destroy(guildId);
+      await this.destroy(guildId, reason);
     });
     await Promise.all(promises);
   }

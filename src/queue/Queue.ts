@@ -27,9 +27,23 @@ export class Queue<T> {
   private readonly maxSize: number;
   private readonly maxHistorySize: number;
 
+  /**
+   * Invoked after any queue mutation (add/remove/advance/reorder/import).
+   * Used by Player for queue persistence; also usable as a change watcher.
+   */
+  public onChanged?: () => void;
+
   public constructor(options?: QueueOptions) {
     this.maxSize = options?.maxSize ?? 0;
     this.maxHistorySize = options?.maxHistorySize ?? 50;
+  }
+
+  private notifyChange(): void {
+    try {
+      this.onChanged?.();
+    } catch {
+      // watcher errors must not break queue operations
+    }
   }
 
   /** Gets total number of tracks currently in the queue */
@@ -109,6 +123,7 @@ export class Queue<T> {
       this.tracks.push(track);
     }
 
+    this.notifyChange();
     return this;
   }
 
@@ -139,6 +154,7 @@ export class Queue<T> {
       this.currentIndex--;
     }
 
+    this.notifyChange();
     return removed;
   }
 
@@ -160,6 +176,7 @@ export class Queue<T> {
 
     if (this._repeatMode === "queue") {
       this.currentIndex = (this.currentIndex + 1) % this.tracks.length;
+      this.notifyChange();
       return this.tracks[this.currentIndex] as T;
     }
 
@@ -167,6 +184,7 @@ export class Queue<T> {
       this.tracks.splice(0, this.currentIndex + 1);
     }
     this.currentIndex = this.tracks.length > 0 ? 0 : -1;
+    this.notifyChange();
     return this.currentTrack;
   }
 
@@ -180,11 +198,13 @@ export class Queue<T> {
       const insertAt = this.currentIndex >= 0 ? this.currentIndex : 0;
       this.tracks.splice(insertAt, 0, historyTrack);
       this.currentIndex = insertAt;
+      this.notifyChange();
       return historyTrack;
     }
 
     if (this.currentIndex > 0) {
       this.currentIndex--;
+      this.notifyChange();
       return this.tracks[this.currentIndex] as T;
     }
 
@@ -195,6 +215,7 @@ export class Queue<T> {
   public start(): T | null {
     if (this.tracks.length === 0) return null;
     this.currentIndex = 0;
+    this.notifyChange();
     return this.tracks[0] as T;
   }
 
@@ -202,11 +223,13 @@ export class Queue<T> {
   public clear(): void {
     this.tracks.length = 0;
     this.currentIndex = -1;
+    this.notifyChange();
   }
 
   /** Clears track play history */
   public clearHistory(): void {
     this.history.length = 0;
+    this.notifyChange();
   }
 
   /** Randomly shuffles queue tracks (excluding currently playing track) */
@@ -220,6 +243,7 @@ export class Queue<T> {
       this.tracks[i] = this.tracks[j] as T;
       this.tracks[j] = temp;
     }
+    this.notifyChange();
   }
 
   /** Removes a range of tracks from queue */
@@ -239,6 +263,7 @@ export class Queue<T> {
       }
     }
 
+    this.notifyChange();
     return removed;
   }
 
@@ -264,6 +289,7 @@ export class Queue<T> {
         this.currentIndex++;
       }
     }
+    this.notifyChange();
   }
 
   /** Swaps two tracks at indexA and indexB in the queue */
@@ -288,6 +314,7 @@ export class Queue<T> {
       this.currentIndex = indexA;
     }
 
+    this.notifyChange();
     return true;
   }
 
@@ -301,6 +328,7 @@ export class Queue<T> {
 
     if (this._repeatMode === "queue") {
       this.currentIndex = index;
+      this.notifyChange();
       return this.tracks[index] as T;
     }
 
@@ -316,6 +344,7 @@ export class Queue<T> {
     }
 
     this.currentIndex = 0;
+    this.notifyChange();
     return this.tracks[0] as T;
   }
 
@@ -349,6 +378,7 @@ export class Queue<T> {
     } else {
       this.currentIndex = -1;
     }
+    this.notifyChange();
   }
 
   /** Replaces queue tracks with a new list */
@@ -356,6 +386,67 @@ export class Queue<T> {
     this.tracks.length = 0;
     this.tracks.push(...tracks);
     this.currentIndex = this.tracks.length > 0 ? 0 : -1;
+    this.notifyChange();
+  }
+
+  /**
+   * Removes tracks by reference or matcher. Accepts a track object, an array
+   * of track objects, or a predicate. Matches by identity first, then by
+   * `encoded` string when present.
+   */
+  public removeTrack(query: T | T[] | ((track: T, index: number) => boolean)): T[] {
+    const matches = (track: T, index: number): boolean => {
+      if (typeof query === "function") {
+        return (query as (t: T, i: number) => boolean)(track, index);
+      }
+      const list = Array.isArray(query) ? query : [query];
+      return list.some((q) => {
+        if (q === track) return true;
+        const qEnc = (q as { encoded?: string })?.encoded;
+        const tEnc = (track as { encoded?: string })?.encoded;
+        return qEnc != null && qEnc === tEnc;
+      });
+    };
+
+    const removed: T[] = [];
+    for (let i = this.tracks.length - 1; i >= 0; i--) {
+      if (i === this.currentIndex) continue; // never remove the playing track here
+      if (matches(this.tracks[i] as T, i)) {
+        removed.push(...this.tracks.splice(i, 1));
+        if (this.currentIndex > i) this.currentIndex--;
+      }
+    }
+    if (removed.length > 0) this.notifyChange();
+    return removed.reverse();
+  }
+
+  /**
+   * Sorts upcoming tracks (after the current one) in place.
+   * @param sortBy "duration" | "title" | "author" or a custom comparator
+   * @param order "asc" (default) or "desc"
+   */
+  public sortBy(
+    sortBy: "duration" | "title" | "author" | ((a: T, b: T) => number),
+    order: "asc" | "desc" = "asc",
+  ): this {
+    const start = this.currentIndex >= 0 ? this.currentIndex + 1 : 0;
+    if (this.tracks.length - start <= 1) return this;
+
+    const info = (t: T): { length?: number; title?: string; author?: string } =>
+      (t as { info?: { length?: number; title?: string; author?: string } }).info ?? {};
+
+    const comparator: (a: T, b: T) => number =
+      typeof sortBy === "function"
+        ? sortBy
+        : sortBy === "duration"
+          ? (a, b) => (info(a).length ?? 0) - (info(b).length ?? 0)
+          : (a, b) => String(info(a)[sortBy] ?? "").localeCompare(String(info(b)[sortBy] ?? ""));
+
+    const upcoming = this.tracks.splice(start);
+    upcoming.sort((a, b) => (order === "desc" ? -comparator(a, b) : comparator(a, b)));
+    this.tracks.push(...upcoming);
+    this.notifyChange();
+    return this;
   }
 
   /** Exports queue state for persistence or serialization */
@@ -376,6 +467,7 @@ export class Queue<T> {
     this.history.push(...state.history);
     this.currentIndex = state.currentIndex;
     this._repeatMode = state.repeatMode;
+    this.notifyChange();
   }
 
   private addCurrentToHistory(): void {

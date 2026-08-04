@@ -22,6 +22,9 @@ export class WebSocketClient {
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private destroyRequested = false;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private heartbeatTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+  private _isAlive = true;
 
   public constructor(options: WebSocketClientOptions) {
     this.options = options;
@@ -42,6 +45,11 @@ export class WebSocketClient {
 
   public get resumed(): boolean {
     return this._resumed;
+  }
+
+  /** False when the last heartbeat ping went unanswered — the connection is presumed dead */
+  public get isAlive(): boolean {
+    return this._isAlive;
   }
 
   public get eventDispatcher(): EventDispatcher {
@@ -96,6 +104,8 @@ export class WebSocketClient {
     const url = `${protocol}://${host}:${port}/v4/websocket`;
 
     const headers: Record<string, string> = {
+      ...this.options.nodeConfig.httpHeaders,
+      // Auth/identity headers last — custom headers must not override them
       Authorization: password,
       "User-Id": this.options.userId,
       "Client-Name": this.options.clientName,
@@ -128,6 +138,8 @@ export class WebSocketClient {
         const wasReconnect = this.reconnectAttempts > 0;
         this._state = "connected";
         this.reconnectAttempts = 0;
+        this._isAlive = true;
+        this.startHeartbeat(instance);
         this.events.emit("debug", `WebSocket connected to ${host}:${port}`);
         if (wasReconnect) {
           this.events.emit("nodeReconnected", this.nodeId);
@@ -153,6 +165,7 @@ export class WebSocketClient {
         const code = typeof event === "number" ? event : (event?.code ?? 1000);
         const reason = event?.reason != null ? String(event.reason) : "";
         this._state = "disconnected";
+        this.stopHeartbeat();
         this.events.emit("debug", `WebSocket closed: code=${code} reason=${reason}`);
         this.events.emit("nodeDisconnected", this.nodeId, code, reason);
 
@@ -278,8 +291,118 @@ export class WebSocketClient {
         break;
       }
       default: {
-        this.events.emit("debug", `Unknown event type: ${(event as { type: string }).type}`);
+        this.handlePluginEvent(event as unknown as Record<string, unknown>, guildId);
       }
+    }
+  }
+
+  /**
+   * Events emitted by Lavalink server plugins (SponsorBlock, LavaLyrics) —
+   * not part of the core v4 protocol, so they arrive as "unknown" types.
+   */
+  private handlePluginEvent(event: Record<string, unknown>, guildId: string): void {
+    switch (event.type) {
+      case "SegmentsLoaded": {
+        this.events.emit("segmentsLoaded", guildId, (event.segments as unknown[]) ?? []);
+        break;
+      }
+      case "SegmentSkipped": {
+        this.events.emit("segmentSkipped", guildId, event.segment);
+        break;
+      }
+      case "ChaptersLoaded": {
+        this.events.emit("chaptersLoaded", guildId, (event.chapters as unknown[]) ?? []);
+        break;
+      }
+      case "ChapterStarted": {
+        this.events.emit("chapterStarted", guildId, event.chapter);
+        break;
+      }
+      case "LyricsFoundEvent": {
+        this.events.emit("lyricsFound", guildId, event.lyrics);
+        break;
+      }
+      case "LyricsNotFoundEvent": {
+        this.events.emit("lyricsNotFound", guildId);
+        break;
+      }
+      case "LyricsLineEvent": {
+        this.events.emit("lyricsLine", guildId, event.line ?? event);
+        break;
+      }
+      default: {
+        this.events.emit("debug", `Unknown event type: ${String(event.type)}`);
+      }
+    }
+  }
+
+  /**
+   * WS-level heartbeat: ping the node on an interval and require a pong within
+   * the timeout. Half-open TCP connections (node crashed, network dropped)
+   * otherwise look "connected" forever and silently swallow every payload.
+   * Only active when the socket implementation exposes ping() (the ws package).
+   */
+  private startHeartbeat(instance: any): void {
+    const {
+      enableHeartbeat = true,
+      heartbeatIntervalMs = 30000,
+      heartbeatTimeoutMs = 10000,
+    } = this.options.nodeConfig;
+    if (!enableHeartbeat || typeof instance.ping !== "function") return;
+
+    this.stopHeartbeat();
+
+    if (typeof instance.on === "function") {
+      instance.on("pong", () => {
+        this._isAlive = true;
+        if (this.heartbeatTimeoutTimer != null) {
+          clearTimeout(this.heartbeatTimeoutTimer);
+          this.heartbeatTimeoutTimer = null;
+        }
+      });
+    }
+
+    this.heartbeatTimer = setInterval(() => {
+      if (this._state !== "connected" || this.ws == null) return;
+      try {
+        instance.ping();
+      } catch {
+        return;
+      }
+      if (this.heartbeatTimeoutTimer == null) {
+        this.heartbeatTimeoutTimer = setTimeout(() => {
+          this.heartbeatTimeoutTimer = null;
+          this._isAlive = false;
+          this.events.emit(
+            "debug",
+            `Heartbeat pong not received within ${heartbeatTimeoutMs}ms — terminating dead connection to ${this.nodeId}`,
+          );
+          // terminate() fires "close", which runs the normal reconnect path
+          const terminate = (instance as { terminate?: () => void }).terminate;
+          if (typeof terminate === "function") {
+            terminate.call(instance);
+          } else {
+            try {
+              instance.close(4000, "Heartbeat timeout");
+            } catch {
+              // ignore
+            }
+          }
+        }, heartbeatTimeoutMs);
+        (this.heartbeatTimeoutTimer as { unref?: () => void }).unref?.();
+      }
+    }, heartbeatIntervalMs);
+    (this.heartbeatTimer as { unref?: () => void }).unref?.();
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer != null) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+    if (this.heartbeatTimeoutTimer != null) {
+      clearTimeout(this.heartbeatTimeoutTimer);
+      this.heartbeatTimeoutTimer = null;
     }
   }
 
@@ -328,6 +451,7 @@ export class WebSocketClient {
   }
 
   private teardownSocket(closeReason: string): void {
+    this.stopHeartbeat();
     if (this.ws === null) return;
 
     this.ws.onclose = null;

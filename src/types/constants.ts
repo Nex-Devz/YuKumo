@@ -33,3 +33,25 @@ export const LoadTypeMap: Record<string, string> = {
   empty: "NO_MATCHES",
   error: "LOAD_FAILED",
 };
+
+/**
+ * Standardized reasons passed to Player.destroy() and emitted with the
+ * "playerDestroy" event — mirrors lavalink-client's DestroyReasons.
+ */
+export const DestroyReasons = {
+  QueueEmpty: "QueueEmpty",
+  NodeDestroy: "NodeDestroy",
+  NodeDeleted: "NodeDeleted",
+  LavalinkNoVoice: "LavalinkNoVoice",
+  NodeReconnectFail: "NodeReconnectFail",
+  Disconnected: "Disconnected",
+  PlayerReconnectFail: "PlayerReconnectFail",
+  ChannelDeleted: "ChannelDeleted",
+  DisconnectAllNodes: "DisconnectAllNodes",
+  TrackErrorMaxTracksErroredPerTime: "TrackErrorMaxTracksErroredPerTime",
+  TrackStuckMaxTracksErroredPerTime: "TrackStuckMaxTracksErroredPerTime",
+  EmptyVoiceChannel: "EmptyVoiceChannel",
+  ManualDestroy: "ManualDestroy",
+} as const;
+
+export type DestroyReason = (typeof DestroyReasons)[keyof typeof DestroyReasons] | string;
