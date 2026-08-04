@@ -636,4 +636,152 @@ describe("Player track-end handling and lifecycle", () => {
     expect(fresh.destroyed).toBe(false);
     expect(kumo.players.get("guild-1")).toBe(fresh);
   });
+
+  it("passes endTime/noReplace/paused/volume play options to the node", async () => {
+    const player = createLivePlayer();
+    await player.play(makeTrack("a"), { endTime: 5000, noReplace: true, paused: true, volume: 80 });
+
+    const call = node.rest.updatePlayer.mock.calls.find((c) => c[2]?.track != null);
+    expect(call?.[2].endTime).toBe(5000);
+    expect(call?.[2].paused).toBe(true);
+    expect(call?.[2].volume).toBe(80);
+    expect(call?.[3]).toBe(true); // noReplace
+    expect(player.paused).toBe(true);
+    expect(player.volume).toBe(80);
+  });
+
+  it("destroys the player with the right reason when maxErrorsPerTime is exceeded", async () => {
+    const player = createLivePlayer();
+    player.maxErrorsPerTime = { threshold: 35000, maxAmount: 2 };
+    const destroyed = vi.fn();
+    kumo.events.on("playerDestroy", destroyed);
+
+    for (let i = 0; i < 3; i++) {
+      node.ws.eventDispatcher.emit("trackException", "guild-1", makeTrack("a"), { message: "boom" });
+    }
+    await flush();
+
+    expect(player.destroyed).toBe(true);
+    expect(destroyed).toHaveBeenCalledWith("guild-1", DestroyReasons.TrackErrorMaxTracksErroredPerTime);
+  });
+
+  it("destroys the player queueEmptyDestroyMs after the queue ends", async () => {
+    vi.useFakeTimers();
+    const player = createLivePlayer();
+    player.queueEmptyDestroyMs = 500;
+    player.queue.enqueue(makeTrack("a"));
+    await player.play();
+
+    node.ws.eventDispatcher.emit("trackEnd", "guild-1", makeTrack("a"), "finished");
+    await vi.advanceTimersByTimeAsync(600);
+
+    expect(player.destroyed).toBe(true);
+    expect(kumo.players.has("guild-1")).toBe(false);
+  });
+
+  it("blocks autoplay after an error end when the track played under minAutoPlayMs", async () => {
+    const player = createLivePlayer();
+    player.minAutoPlayMs = 10000;
+    const fetcher = vi.fn().mockResolvedValue(makeTrack("auto"));
+    player.setAutoplay(true, fetcher);
+    const queueEnd = vi.fn();
+    player.on("queueEnd", queueEnd);
+
+    player.queue.enqueue(makeTrack("a"));
+    await player.play();
+    node.ws.eventDispatcher.emit("trackStart", "guild-1", makeTrack("a"));
+    node.ws.eventDispatcher.emit("trackEnd", "guild-1", makeTrack("a"), "loadFailed");
+    await flush();
+
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(queueEnd).toHaveBeenCalledWith("guild-1");
+  });
+
+  it("persists the queue and restores it on a fresh player", async () => {
+    const player = createLivePlayer();
+    player.enableQueuePersistence();
+    player.queue.enqueue(makeTrack("a")).enqueue(makeTrack("b"));
+    await flush(); // microtask-coalesced save
+
+    // Shutdown-style destroy keeps the persisted queue on disk
+    await player.destroy(DestroyReasons.DisconnectAllNodes);
+
+    const fresh = createLivePlayer();
+    fresh.enableQueuePersistence();
+    const restored = await fresh.restoreQueue();
+    expect(restored).toBe(true);
+    expect(fresh.queue.size).toBe(2);
+    expect(fresh.queue.tracksList[0]?.encoded).toBe("encoded-a");
+  });
+
+  it("deletes the persisted queue on a normal destroy", async () => {
+    const player = createLivePlayer();
+    player.enableQueuePersistence();
+    player.queue.enqueue(makeTrack("a"));
+    await flush();
+
+    await player.destroy(); // ManualDestroy
+    await flush();
+
+    const fresh = createLivePlayer();
+    fresh.enableQueuePersistence();
+    expect(await fresh.restoreQueue()).toBe(false);
+  });
+
+  it("forwards guild-scoped plugin events to player.events", async () => {
+    const player = createLivePlayer();
+    const onLine = vi.fn();
+    const onSegments = vi.fn();
+    player.on("lyricsLine", onLine);
+    player.on("segmentsLoaded", onSegments);
+
+    node.ws.eventDispatcher.emit("lyricsLine", "guild-1", { line: "hello" });
+    node.ws.eventDispatcher.emit("segmentsLoaded", "guild-1", [{ category: "sponsor" }]);
+    node.ws.eventDispatcher.emit("lyricsLine", "other-guild", { line: "nope" });
+
+    expect(onLine).toHaveBeenCalledTimes(1);
+    expect(onLine).toHaveBeenCalledWith("guild-1", { line: "hello" });
+    expect(onSegments).toHaveBeenCalledWith("guild-1", [{ category: "sponsor" }]);
+  });
+
+  it("calls SponsorBlock and lyrics endpoints with session and guild", async () => {
+    const player = createLivePlayer();
+
+    await player.setSponsorBlock(["sponsor", "intro"]);
+    expect(node.rest.setSponsorBlockCategories).toHaveBeenCalledWith("lava-session", "guild-1", [
+      "sponsor",
+      "intro",
+    ]);
+
+    await expect(player.getSponsorBlock()).resolves.toEqual(["sponsor"]);
+    await player.deleteSponsorBlock();
+    expect(node.rest.deleteSponsorBlockCategories).toHaveBeenCalledWith("lava-session", "guild-1");
+
+    await player.subscribeLyrics(true);
+    expect(node.rest.subscribeLyrics).toHaveBeenCalledWith("lava-session", "guild-1", true);
+    await player.unsubscribeLyrics();
+    expect(node.rest.unsubscribeLyrics).toHaveBeenCalledWith("lava-session", "guild-1");
+    await expect(player.getCurrentLyrics()).resolves.toEqual({ text: "la" });
+  });
+
+  it("exposes ping and a full toJSON snapshot", async () => {
+    const player = createLivePlayer();
+    player.queue.enqueue(makeTrack("a"));
+    await player.play();
+    node.ws.eventDispatcher.emit("playerUpdate", "guild-1", {
+      time: 0,
+      position: 1234,
+      connected: true,
+      ping: 17,
+    });
+
+    expect(player.ping).toEqual({ ws: 42, lavalink: 17 });
+
+    const json = player.toJSON();
+    expect(json.guildId).toBe("guild-1");
+    expect(json.status).toBe("playing");
+    expect(json.nodeId).toBe("live-node");
+    expect(json.queue.tracks[0]?.encoded).toBe("encoded-a");
+    expect(json.voiceState.token).toBe("voice-token");
+  });
 });

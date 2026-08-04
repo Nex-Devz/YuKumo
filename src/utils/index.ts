@@ -85,8 +85,11 @@ export function parseLavalinkConnUrl(connectionUrl: string): {
   port: number;
   secure: boolean;
 } {
-  const url = new URL(connectionUrl.replace(/^lavalink:\/\//i, "http://"));
-  const port = Number(url.port);
+  const secure = /^(https|wss):\/\//i.test(connectionUrl);
+  // Normalize to http:// so URL parsing never elides scheme-default ports
+  // (wss://host:443 would otherwise report an empty port)
+  const url = new URL(connectionUrl.replace(/^[a-z]+:\/\//i, "http://"));
+  const port = url.port !== "" ? Number(url.port) : secure ? 443 : 80;
   if (!url.hostname || Number.isNaN(port) || port <= 0) {
     throw new Error(`Invalid lavalink connection url: ${connectionUrl}`);
   }
@@ -95,7 +98,7 @@ export function parseLavalinkConnUrl(connectionUrl: string): {
     password: decodeURIComponent(url.password),
     host: url.hostname,
     port,
-    secure: /^(https|wss):\/\//i.test(connectionUrl),
+    secure,
   };
 }
 
