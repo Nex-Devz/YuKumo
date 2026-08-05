@@ -886,6 +886,12 @@ export class YuKumo {
     const ws = node.ws.eventDispatcher;
     ws.on("nodeReady", (nodeId: string) => {
       this.events.emit("nodeReady", nodeId);
+      // Persist the session ID so a restarted process can reclaim the session
+      if (this.resuming.enabled && node.ws.sessionId != null) {
+        void Promise.resolve(
+          this.storage.set(this.sessionStorageKey(nodeId), node.ws.sessionId),
+        ).catch(() => undefined);
+      }
       // A fresh (non-resumed) Lavalink session starts with zero players —
       // push each affected player's full state back or they stay silent forever
       if (!node.ws.resumed) {
