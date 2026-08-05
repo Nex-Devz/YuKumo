@@ -698,6 +698,7 @@ export class Player<TTrack extends TrackData = TrackData> {
    */
   public setLoop(mode: "none" | "track" | "queue"): this {
     this.queue.setRepeatMode(mode);
+    this.scheduleStateSave();
     return this;
   }
 
@@ -829,6 +830,10 @@ export class Player<TTrack extends TrackData = TrackData> {
     return `yukumo:queue:${this.guildId}`;
   }
 
+  private get stateStorageKey(): string {
+    return `yukumo:player:${this.guildId}`;
+  }
+
   /**
    * Persists the queue to the manager's storage adapter on every mutation
    * (microtask-coalesced), enabling queue restore across restarts.
@@ -836,7 +841,102 @@ export class Player<TTrack extends TrackData = TrackData> {
   public enableQueuePersistence(): void {
     if (this.kumo?.storage == null) return;
     this._persistQueue = true;
-    this.queue.onChanged = () => this.scheduleQueueSave();
+    this.syncQueueChangedHook();
+  }
+
+  /**
+   * Persists the full player snapshot (queue, position, volume, filters,
+   * repeat/autoplay/24-7 flags) so a restarted bot can rebuild this player and
+   * keep playing. Saved on track start, every playerUpdate, queue mutations,
+   * and playback-affecting setters; coalesced per microtask.
+   */
+  public enableStatePersistence(): void {
+    if (this.kumo?.storage == null) return;
+    this._persistState = true;
+    this.syncQueueChangedHook();
+    this.scheduleStateSave();
+  }
+
+  /** Queue mutations feed both persistence layers when enabled */
+  private syncQueueChangedHook(): void {
+    this.queue.onChanged = () => {
+      if (this._persistQueue) this.scheduleQueueSave();
+      if (this._persistState) this.scheduleStateSave();
+    };
+  }
+
+  private scheduleStateSave(): void {
+    if (!this._persistState || this._destroyed || this._stateSaveScheduled) return;
+    this._stateSaveScheduled = true;
+    queueMicrotask(() => {
+      this._stateSaveScheduled = false;
+      if (this._destroyed) return;
+      void this.saveState().catch(() => undefined);
+    });
+  }
+
+  /** Writes the current full player snapshot to the storage adapter immediately */
+  public async saveState(): Promise<void> {
+    if (this.kumo?.storage == null) return;
+    try {
+      await this.kumo.storage.set(this.stateStorageKey, this.toJSON());
+    } catch (err) {
+      this.events.emit(
+        "debug",
+        `Failed to persist player state for guild ${this.guildId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  /**
+   * Applies a persisted snapshot to this (freshly created) player: queue,
+   * volume, repeat mode, autoplay, 24/7 flag, filters, position, and pause
+   * state. Does not touch the node — callers decide whether to adopt a live
+   * session or re-send the play request.
+   */
+  public restoreFromState(state: PlayerJson): void {
+    if (state.queue != null) {
+      this.queue.import(state.queue as SerializedQueue<TTrack>);
+    }
+    this._volume = state.volume ?? this._volume;
+    this.queue.setRepeatMode(state.repeatMode ?? "none");
+    this.autoplay = state.autoplay ?? this.autoplay;
+    this.stayInVc = state.stayInVc ?? this.stayInVc;
+    this._textChannelId = state.textChannelId ?? this._textChannelId;
+    this._paused = state.paused ?? false;
+    this._position = state.position ?? 0;
+    this._positionTimestamp = 0;
+    if (state.filters != null && Object.keys(state.filters).length > 0) {
+      this.filters.apply(state.filters as import("../types/protocol.ts").FiltersObject);
+    }
+  }
+
+  /**
+   * Adopts a still-live server-side player after a resumed Lavalink session —
+   * the node kept playing through the restart, so only internal state is
+   * synchronized and no play request is sent (audio never stops).
+   */
+  public adoptLiveState(live: import("../types/protocol.ts").PlayerData): void {
+    if (live.track != null) {
+      const current = this.currentTrack;
+      if (current == null || current.encoded !== live.track.encoded) {
+        // Restored queue diverged from what the node is actually playing —
+        // trust the node
+        this.queue.priorityEnqueue(live.track as TTrack);
+        this.queue.start();
+      }
+      this._status = live.paused ? "paused" : "playing";
+      this._lastTrackStartTs = Date.now();
+    } else {
+      this._status = "idle";
+    }
+    this._paused = live.paused;
+    this._volume = live.volume;
+    this._position = live.state?.position ?? 0;
+    this._positionTimestamp = Date.now();
+    // The resumed session already holds working voice credentials — pushing
+    // our stale pre-restart ones would kill the live connection
+    this._voiceStateSent = true;
   }
 
   private scheduleQueueSave(): void {
@@ -1050,6 +1150,7 @@ export class Player<TTrack extends TrackData = TrackData> {
     if (this._status === "playing") {
       this._status = "paused";
     }
+    this.scheduleStateSave();
   }
 
   /** Resumes paused track playback (no-op when not paused) */
@@ -1069,6 +1170,7 @@ export class Player<TTrack extends TrackData = TrackData> {
     if (this._status === "paused") {
       this._status = "playing";
     }
+    this.scheduleStateSave();
   }
 
   /**
@@ -1087,6 +1189,7 @@ export class Player<TTrack extends TrackData = TrackData> {
     await this._node.rest.updatePlayer(sessionId, this.guildId, {
       volume: clamped,
     });
+    this.scheduleStateSave();
   }
 
   /** Seeks to position in track (milliseconds), clamped to [0, track length] */
@@ -1155,7 +1258,114 @@ export class Player<TTrack extends TrackData = TrackData> {
     if (fetcher !== undefined) {
       this.autoplayFetcher = fetcher;
     }
+    this.scheduleStateSave();
     return this;
+  }
+
+  // ─── NodeLink-exclusive player features ──────────────────────────────────
+
+  /** True when this player's node is NodeLink */
+  public get isOnNodeLink(): boolean {
+    return this._node.isNodeLink;
+  }
+
+  private assertNodeLink(feature: string): void {
+    if (!this._node.isNodeLink) {
+      throw new PlayerError(`${feature} requires a NodeLink node`, this.guildId);
+    }
+  }
+
+  /**
+   * Loads lyrics via NodeLink's built-in /v4/loadlyrics (no plugin needed).
+   * @param lang Optional preferred language code (e.g. "en", "ja")
+   */
+  public async getNodeLinkLyrics(lang?: string, track?: TTrack): Promise<unknown> {
+    if (this._destroyed) throw new PlayerError("Player is destroyed", this.guildId);
+    const encoded = (track ?? this.currentTrack)?.encoded;
+    if (!encoded) return null;
+    return this._node.rest.loadLyrics(encoded, lang);
+  }
+
+  /** Loads YouTube chapter markers via NodeLink's /v4/loadchapters */
+  public async getChapters(track?: TTrack): Promise<unknown> {
+    if (this._destroyed) throw new PlayerError("Player is destroyed", this.guildId);
+    const encoded = (track ?? this.currentTrack)?.encoded;
+    if (!encoded) return null;
+    return this._node.rest.loadChapters(encoded);
+  }
+
+  /** Fetches track background/meaning info via NodeLink's /v4/meaning */
+  public async getTrackMeaning(track?: TTrack): Promise<unknown> {
+    if (this._destroyed) throw new PlayerError("Player is destroyed", this.guildId);
+    const encoded = (track ?? this.currentTrack)?.encoded;
+    if (!encoded) return null;
+    return this._node.rest.getMeaning(encoded);
+  }
+
+  /**
+   * Preloads the next track on the node for gapless playback (NodeLink only).
+   * Pass null to clear the preload.
+   */
+  public async setGaplessNext(track: TTrack | null): Promise<void> {
+    if (this._destroyed) throw new PlayerError("Player is destroyed", this.guildId);
+    this.assertNodeLink("Gapless preloading");
+    const sessionId = this._node.rest.sessionId;
+    if (sessionId == null) return;
+    await this._node.rest.updatePlayer(sessionId, this.guildId, {
+      nextTrack: track != null ? { encoded: track.encoded } : null,
+    });
+  }
+
+  /**
+   * Configures fade curves (NodeLink only). Sections: trackStart, trackEnd,
+   * trackStop, seek, ducking — each `{ duration, curve }` with curve one of
+   * linear | exponential | logarithmic | s-curve.
+   */
+  public async setFading(
+    fading: Record<string, { duration: number; curve?: string }>,
+  ): Promise<void> {
+    if (this._destroyed) throw new PlayerError("Player is destroyed", this.guildId);
+    this.assertNodeLink("Fading");
+    const sessionId = this._node.rest.sessionId;
+    if (sessionId == null) return;
+    await this._node.rest.updatePlayer(sessionId, this.guildId, { fading });
+  }
+
+  /** Adds an audio mixer layer (overlay TTS/sound effects — NodeLink only) */
+  public async addMixLayer(layer: Record<string, unknown>): Promise<unknown> {
+    if (this._destroyed) throw new PlayerError("Player is destroyed", this.guildId);
+    this.assertNodeLink("Audio mixer");
+    return this._node.rest.addMixLayer(this._node.rest.sessionId, this.guildId, layer);
+  }
+
+  /** Lists active audio mixer layers (NodeLink only) */
+  public async getMixLayers(): Promise<unknown> {
+    if (this._destroyed) throw new PlayerError("Player is destroyed", this.guildId);
+    this.assertNodeLink("Audio mixer");
+    return this._node.rest.getMixLayers(this._node.rest.sessionId, this.guildId);
+  }
+
+  /** Updates an audio mixer layer, e.g. `{ volume }` (NodeLink only) */
+  public async updateMixLayer(mixId: string, body: Record<string, unknown>): Promise<unknown> {
+    if (this._destroyed) throw new PlayerError("Player is destroyed", this.guildId);
+    this.assertNodeLink("Audio mixer");
+    return this._node.rest.updateMixLayer(this._node.rest.sessionId, this.guildId, mixId, body);
+  }
+
+  /** Removes an audio mixer layer (NodeLink only) */
+  public async removeMixLayer(mixId: string): Promise<void> {
+    if (this._destroyed) throw new PlayerError("Player is destroyed", this.guildId);
+    this.assertNodeLink("Audio mixer");
+    return this._node.rest.removeMixLayer(this._node.rest.sessionId, this.guildId, mixId);
+  }
+
+  /**
+   * Creates a voice receiver for this guild via NodeLink's /connection/data
+   * WebSocket (NodeLink only). Emits startSpeaking/endSpeaking with captured audio.
+   */
+  public createVoiceReceiver(): import("../node/NodeLinkVoiceReceiver.ts").NodeLinkVoiceReceiver {
+    this.assertNodeLink("Voice receive");
+    return this._node.createVoiceReceiver(this.guildId);
   }
 
   /**
@@ -1342,6 +1552,11 @@ export class Player<TTrack extends TrackData = TrackData> {
 
     if (this._persistQueue && reason !== DestroyReasons.DisconnectAllNodes) {
       void Promise.resolve(this.kumo.storage.delete(this.queueStorageKey)).catch(() => undefined);
+    }
+    // Keep the player snapshot on shutdown so a restart can restore it;
+    // delete on every normal destroy
+    if (this._persistState && reason !== DestroyReasons.DisconnectAllNodes) {
+      void Promise.resolve(this.kumo.storage.delete(this.stateStorageKey)).catch(() => undefined);
     }
 
     const sessionId = this._node.rest.sessionId;

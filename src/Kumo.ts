@@ -137,6 +137,8 @@ export class YuKumo {
   private readonly playerDefaults: NonNullable<ManagerOptions["playerDefaults"]>;
   /** Queue behavior defaults (persistence) */
   private readonly queueOptions: NonNullable<ManagerOptions["queueOptions"]>;
+  /** Session + player resuming across restarts (see ManagerOptions.resuming) */
+  private readonly resuming: { enabled: boolean; timeout: number; persistPlayers: boolean };
 
   public constructor(options: ManagerOptions) {
     this._userId = options.userId ?? "";
@@ -164,8 +166,14 @@ export class YuKumo {
           : { threshold: 35000, maxAmount: 3 },
       minAutoPlayMs: options.playerDefaults?.minAutoPlayMs ?? 10000,
       queueEmptyDestroyMs: options.playerDefaults?.queueEmptyDestroyMs ?? 0,
+      autoplay: options.playerDefaults?.autoplay ?? false,
     };
     this.queueOptions = { persist: options.queueOptions?.persist ?? false };
+    this.resuming = {
+      enabled: options.resuming?.enabled ?? false,
+      timeout: options.resuming?.timeout ?? 60,
+      persistPlayers: options.resuming?.persistPlayers ?? options.resuming?.enabled ?? false,
+    };
     this.events = new EventDispatcher();
     this.voice = new VoiceStateTracker(this.events);
     this.searchCache = new SearchCache();
@@ -187,6 +195,15 @@ export class YuKumo {
 
     this.registerNodes(options.nodes, options.httpHeaders);
     this.registerPlugins(options.plugins);
+
+    if (this.resuming.enabled && this.resuming.persistPlayers) {
+      // Keep the restore index in sync; shutdown destroys (DisconnectAllNodes)
+      // must NOT empty it — that's exactly what the next restart restores from
+      this.events.on("playerDestroy", (_guildId: string, reason?: string) => {
+        if (reason === DestroyReasons.DisconnectAllNodes) return;
+        void this.updatePlayersIndex();
+      });
+    }
   }
 
   /** Registers an adapter for automatic listener teardown when this manager is destroyed */
@@ -205,10 +222,162 @@ export class YuKumo {
     return this._userId;
   }
 
-  /** Connects to all configured Lavalink nodes and starts plugins */
+  /**
+   * Connects to all configured Lavalink nodes and starts plugins.
+   * With `resuming.enabled`, persisted session IDs are seeded first so nodes
+   * reclaim their previous sessions (audio keeps playing through the restart),
+   * and persisted players are rebuilt automatically.
+   */
   public async init(): Promise<void> {
+    if (this.resuming.enabled) {
+      await this.seedPersistedSessions();
+    }
     await this.nodes.connectAll();
     await this.plugins.startAll();
+    if (this.resuming.enabled && this.resuming.persistPlayers) {
+      await this.restorePlayers();
+    }
+  }
+
+  private sessionStorageKey(nodeId: string): string {
+    return `yukumo:session:${nodeId}`;
+  }
+
+  /** Loads persisted Lavalink session IDs into each node's WS client pre-connect */
+  private async seedPersistedSessions(): Promise<void> {
+    for (const node of this.nodes.getAll()) {
+      try {
+        const stored = await this.storage.get(this.sessionStorageKey(node.id));
+        if (typeof stored === "string" && stored !== "") {
+          node.ws.setSessionId(stored);
+          this.logger.debug?.(`Seeded persisted session ${stored} for node ${node.id}`);
+        }
+      } catch {
+        // missing/broken session records must not block startup
+      }
+    }
+  }
+
+  /**
+   * Rebuilds players from persisted snapshots (yukumo:player:*). For each
+   * snapshot: recreate the player, restore queue/volume/filters/flags, rejoin
+   * the voice channel, then either adopt the node's still-live player (session
+   * resumed — audio never stopped) or re-send the play request at the saved
+   * position. Emits "playerRestored" (guildId, resumedLive) per player.
+   */
+  public async restorePlayers(): Promise<number> {
+    let snapshots: import("./player/Player.ts").PlayerJson[];
+    try {
+      const raw = await this.storage.get("yukumo:players:index");
+      const guildIds: string[] = Array.isArray(raw) ? (raw as string[]) : [];
+      const loaded = await Promise.all(
+        guildIds.map(async (guildId) => {
+          try {
+            return (await this.storage.get(`yukumo:player:${guildId}`)) as
+              | import("./player/Player.ts").PlayerJson
+              | null;
+          } catch {
+            return null;
+          }
+        }),
+      );
+      snapshots = loaded.filter(
+        (s): s is import("./player/Player.ts").PlayerJson => s != null && typeof s.guildId === "string",
+      );
+    } catch {
+      return 0;
+    }
+
+    let restored = 0;
+    for (const snapshot of snapshots) {
+      try {
+        await this.restorePlayerFromSnapshot(snapshot);
+        restored++;
+      } catch (err) {
+        this.logger.warn(
+          `Failed to restore player for guild ${snapshot.guildId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+    return restored;
+  }
+
+  private async restorePlayerFromSnapshot(
+    snapshot: import("./player/Player.ts").PlayerJson,
+  ): Promise<void> {
+    if (this.players.has(snapshot.guildId)) return;
+
+    const preferredNode = this.nodes.get(snapshot.nodeId);
+    const node =
+      preferredNode != null && preferredNode.state === "connected"
+        ? preferredNode
+        : this.nodes.pick(snapshot.guildId);
+    if (node == null) throw new Error("No available nodes");
+
+    const player = this.players.create({
+      guildId: snapshot.guildId,
+      node,
+      voiceChannelId: snapshot.voiceChannelId,
+      textChannelId: snapshot.textChannelId ?? undefined,
+      maxErrorsPerTime: this.playerDefaults.maxErrorsPerTime,
+      minAutoPlayMs: this.playerDefaults.minAutoPlayMs,
+      queueEmptyDestroyMs: this.playerDefaults.queueEmptyDestroyMs,
+      persistQueue: this.queueOptions.persist,
+      persistState: true,
+      autoplay: this.playerDefaults.autoplay,
+    });
+    player.restoreFromState(snapshot);
+    this.bindPlayerEvents(player);
+
+    // A resumed session may still be playing this guild — adopt it silently
+    let live: import("./types/protocol.ts").PlayerData | null = null;
+    if (node.ws.resumed && node.id === snapshot.nodeId) {
+      live = await node.rest.getPlayer(node.rest.sessionId, snapshot.guildId).catch(() => null);
+    }
+
+    if (live != null && live.track != null) {
+      player.adoptLiveState(live);
+      this.events.emit("playerRestored", snapshot.guildId, true);
+      return;
+    }
+
+    // Session gone (or NodeLink): rejoin voice and replay at the saved position
+    if (this.sendGatewayPayload != null) {
+      player.connect();
+    }
+    const current = player.currentTrack;
+    if (current != null && (snapshot.status === "playing" || snapshot.status === "paused")) {
+      await player.playTrack(current, {
+        position: snapshot.position,
+        paused: snapshot.paused,
+        volume: snapshot.volume,
+      });
+    }
+    this.events.emit("playerRestored", snapshot.guildId, false);
+  }
+
+  /** Common per-player global event wiring (used by doCreatePlayer and restore) */
+  private bindPlayerEvents(player: Player): void {
+    player.events.on("queueEnd", (guildId: string) => {
+      this.events.emit("queueEnd", guildId);
+      this.events.emit("playerEmpty" as EventName, guildId);
+    });
+  }
+
+  /**
+   * Rewrites the persisted guild-ID index of active players — restorePlayers()
+   * reads this on startup to know which yukumo:player:* snapshots to load.
+   */
+  private async updatePlayersIndex(): Promise<void> {
+    try {
+      const guildIds = this.players
+        .getAll()
+        .filter((p) => !p.destroyed)
+        .map((p) => p.guildId);
+      await this.storage.set("yukumo:players:index", guildIds);
+    } catch {
+      // index write failures must not break player lifecycle
+    }
   }
 
   /** Destroys all players, closes node WS connections, and cleans up event listeners, caches, and storage */
@@ -421,7 +590,13 @@ export class YuKumo {
       minAutoPlayMs: this.playerDefaults.minAutoPlayMs,
       queueEmptyDestroyMs: this.playerDefaults.queueEmptyDestroyMs,
       persistQueue: this.queueOptions.persist,
+      persistState: this.resuming.enabled && this.resuming.persistPlayers,
+      autoplay: this.playerDefaults.autoplay,
     });
+
+    if (this.resuming.enabled && this.resuming.persistPlayers) {
+      void this.updatePlayersIndex();
+    }
 
     if (this.queueOptions.persist === true) {
       await player.restoreQueue();
@@ -435,10 +610,7 @@ export class YuKumo {
       }
     }
 
-    player.events.on("queueEnd", (guildId: string) => {
-      this.events.emit("queueEnd", guildId);
-      this.events.emit("playerEmpty" as EventName, guildId);
-    });
+    this.bindPlayerEvents(player);
 
     // Join the voice channel right away when the manager can dispatch OP4
     if (this.sendGatewayPayload != null) {
@@ -693,10 +865,18 @@ export class YuKumo {
 
   private registerNodes(configs: NodeConfig[], httpHeaders?: Record<string, string>): void {
     for (const config of configs) {
-      const merged =
+      let merged =
         httpHeaders != null
           ? { ...config, httpHeaders: { ...httpHeaders, ...config.httpHeaders } }
           : config;
+      // Manager-level resuming turns it on for every node (NodeLink nodes skip it themselves)
+      if (this.resuming.enabled) {
+        merged = {
+          ...merged,
+          resuming: merged.resuming ?? true,
+          resumeTimeout: merged.resumeTimeout ?? this.resuming.timeout,
+        };
+      }
       const node = this.nodes.add(merged);
       this.bindNodeEvents(node);
     }
