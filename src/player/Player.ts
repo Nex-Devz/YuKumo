@@ -72,6 +72,10 @@ export interface PlayerOptions {
   queueEmptyDestroyMs?: number;
   /** Persist the queue to the manager's storage adapter on every change */
   persistQueue?: boolean;
+  /** Persist full player state (position, volume, filters, flags) for restart resuming */
+  persistState?: boolean;
+  /** Enable source-aware autoplay from creation */
+  autoplay?: boolean;
   /** Reference to the main YuKumo client */
   kumo: YuKumo;
 }
@@ -113,6 +117,8 @@ export class Player<TTrack extends TrackData = TrackData> {
   private _lavalinkPing: number | null = null;
   private _persistQueue: boolean = false;
   private _queueSaveScheduled: boolean = false;
+  private _persistState: boolean = false;
+  private _stateSaveScheduled: boolean = false;
 
   private _node: Node;
   private readonly kumo: YuKumo;
@@ -155,6 +161,7 @@ export class Player<TTrack extends TrackData = TrackData> {
     this._paused = false;
     this._lastTrackStartTs = Date.now();
     this.cancelQueueEmptyDestroy();
+    this.scheduleStateSave();
     this.events.emit("trackStart", guildId, track);
   };
 
@@ -172,6 +179,8 @@ export class Player<TTrack extends TrackData = TrackData> {
     if (typeof state.ping === "number" && state.ping >= 0) {
       this._lavalinkPing = state.ping;
     }
+    // Keeps the persisted position fresh (~5s granularity) for restart resuming
+    this.scheduleStateSave();
     this.events.emit("playerUpdate", guildId, state as never);
   };
 
@@ -237,9 +246,14 @@ export class Player<TTrack extends TrackData = TrackData> {
     this.filters = new FilterChain();
     this.events = new EventDispatcher();
 
+    this.autoplay = options.autoplay ?? false;
+
     this.setupNodeListeners();
     if (options.persistQueue === true) {
       this.enableQueuePersistence();
+    }
+    if (options.persistState === true) {
+      this.enableStatePersistence();
     }
   }
 
