@@ -295,13 +295,23 @@ export class RestClient {
     sessionId: string | null,
     guildId: string,
     options: {
-      track?: { encoded?: string | null; identifier?: string; userData?: Record<string, unknown> } | null;
+      track?: {
+        encoded?: string | null;
+        identifier?: string;
+        userData?: Record<string, unknown>;
+        /** NodeLink only: select an alternate audio stream (see pluginInfo.audioTracks) */
+        audioTrackId?: string | number;
+      } | null;
       position?: number;
       endTime?: number | null;
       volume?: number;
       paused?: boolean;
       filters?: FiltersObject;
       voice?: { token: string; endpoint: string; sessionId: string; channelId?: string | null };
+      /** NodeLink only: gapless playback — preload the next track on the node */
+      nextTrack?: { encoded: string | null; userData?: Record<string, unknown> } | null;
+      /** NodeLink only: crossfade/fade curves (trackStart, trackEnd, trackStop, seek, ducking) */
+      fading?: Record<string, { duration: number; curve?: string }>;
     },
     noReplace?: boolean,
   ): Promise<PlayerData> {
@@ -535,6 +545,79 @@ export class RestClient {
   public async unsubscribeLyrics(sessionId: string | null, guildId: string): Promise<void> {
     const sid = this.resolveSessionId(sessionId, `/sessions/-/players/${guildId}/lyrics/subscribe`);
     return this.request<void>("DELETE", `/sessions/${sid}/players/${guildId}/lyrics/subscribe`);
+  }
+
+  // ─── NodeLink-exclusive endpoints ────────────────────────────────────────
+
+  /**
+   * Loads lyrics for a track via NodeLink's built-in /v4/loadlyrics endpoint
+   * (YouTube Captions, Musixmatch, LRCLib, Genius — no plugin required).
+   * @param encodedTrack The encoded track base64 string
+   * @param lang Optional preferred language code (e.g. "en", "ja")
+   */
+  public async loadLyrics(encodedTrack: string, lang?: string): Promise<unknown> {
+    const key = `loadlyrics:${encodedTrack}:${lang ?? ""}`;
+    const cached = this.getCached<unknown>(key);
+    if (cached) return cached;
+
+    const params: Record<string, string> = { encodedTrack };
+    if (lang != null) params.lang = lang;
+    const res = await this.request<unknown>("GET", "/loadlyrics", undefined, params);
+    this.setCached(key, res);
+    return res;
+  }
+
+  /**
+   * Loads YouTube chapter markers for a track via NodeLink's /v4/loadchapters.
+   * @param encodedTrack The encoded track base64 string (YouTube tracks only)
+   */
+  public async loadChapters(encodedTrack: string): Promise<unknown> {
+    return this.request<unknown>("GET", "/loadchapters", undefined, { encodedTrack });
+  }
+
+  /**
+   * Fetches track "meaning" info (Wikipedia / Letras.mus.br) via NodeLink's /v4/meaning.
+   */
+  public async getMeaning(encodedTrack: string): Promise<unknown> {
+    return this.request<unknown>("GET", "/meaning", undefined, { encodedTrack });
+  }
+
+  /** NodeLink connection metrics (speed, downloaded bytes, duration) via /v4/connection */
+  public async getConnectionMetrics(): Promise<unknown> {
+    return this.request<unknown>("GET", "/connection");
+  }
+
+  /** Adds an audio mixer layer to a guild's player (NodeLink only) */
+  public async addMixLayer(
+    sessionId: string | null,
+    guildId: string,
+    layer: Record<string, unknown>,
+  ): Promise<unknown> {
+    const sid = this.resolveSessionId(sessionId, `/sessions/-/players/${guildId}/mix`);
+    return this.request<unknown>("POST", `/sessions/${sid}/players/${guildId}/mix`, layer);
+  }
+
+  /** Lists active audio mixer layers for a guild's player (NodeLink only) */
+  public async getMixLayers(sessionId: string | null, guildId: string): Promise<unknown> {
+    const sid = this.resolveSessionId(sessionId, `/sessions/-/players/${guildId}/mix`);
+    return this.request<unknown>("GET", `/sessions/${sid}/players/${guildId}/mix`);
+  }
+
+  /** Updates an audio mixer layer (e.g. volume) on a guild's player (NodeLink only) */
+  public async updateMixLayer(
+    sessionId: string | null,
+    guildId: string,
+    mixId: string,
+    body: Record<string, unknown>,
+  ): Promise<unknown> {
+    const sid = this.resolveSessionId(sessionId, `/sessions/-/players/${guildId}/mix/${mixId}`);
+    return this.request<unknown>("PATCH", `/sessions/${sid}/players/${guildId}/mix/${mixId}`, body);
+  }
+
+  /** Removes an audio mixer layer from a guild's player (NodeLink only) */
+  public async removeMixLayer(sessionId: string | null, guildId: string, mixId: string): Promise<void> {
+    const sid = this.resolveSessionId(sessionId, `/sessions/-/players/${guildId}/mix/${mixId}`);
+    return this.request<void>("DELETE", `/sessions/${sid}/players/${guildId}/mix/${mixId}`);
   }
 
   /**

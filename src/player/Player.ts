@@ -422,17 +422,7 @@ export class Player<TTrack extends TrackData = TrackData> {
         if (this.autoplayFetcher != null) {
           autoTrack = await this.autoplayFetcher(lastTrack);
         } else {
-          // Default smart autoplay fallback: search related tracks using artist & title or YouTube RD mix
-          const searchIdentifier = lastTrack.info?.identifier
-            ? `https://www.youtube.com/watch?v=${lastTrack.info.identifier}&list=RD${lastTrack.info.identifier}`
-            : `ytsearch:${lastTrack.info?.author ?? ""} ${lastTrack.info?.title ?? ""}`;
-
-          const result = await this._node.rest.loadTracks(searchIdentifier);
-          if (result.loadType === "playlist" && result.data.tracks.length > 1) {
-            autoTrack = (result.data.tracks[1] ?? result.data.tracks[0]) as TTrack;
-          } else if (result.loadType === "search" && result.data.length > 0) {
-            autoTrack = result.data[0] as TTrack;
-          }
+          autoTrack = await this.resolveAutoplayTrack(lastTrack);
         }
 
         if (autoTrack != null) {
@@ -478,6 +468,94 @@ export class Player<TTrack extends TrackData = TrackData> {
   /** Gets whether autoplay is currently enabled */
   public isAutoplayEnabled(): boolean {
     return this.autoplay;
+  }
+
+  /** Identifiers of recently played tracks — used to keep autoplay from repeating itself */
+  private recentTrackIdentifiers(limit: number = 20): Set<string> {
+    const ids = new Set<string>();
+    const history = this.queue.historyList;
+    for (const track of history.slice(Math.max(0, history.length - limit))) {
+      const id = (track as TrackData).info?.identifier;
+      if (id) ids.add(id);
+    }
+    const currentId = this.currentTrack?.info?.identifier;
+    if (currentId) ids.add(currentId);
+    return ids;
+  }
+
+  /** Picks the first candidate track not in the exclude set (falls back to the first candidate) */
+  private pickAutoplayCandidate(
+    result: import("../types/protocol.ts").LoadResult,
+    exclude: Set<string>,
+  ): TTrack | null {
+    let candidates: TrackData[] = [];
+    if (result.loadType === "playlist") candidates = result.data.tracks;
+    else if (result.loadType === "search") candidates = result.data;
+    else if (result.loadType === "track") candidates = [result.data];
+    if (candidates.length === 0) return null;
+
+    const fresh = candidates.find((t) => {
+      const id = t.info?.identifier;
+      return id != null && !exclude.has(id);
+    });
+    return (fresh ?? null) as TTrack | null;
+  }
+
+  /**
+   * Built-in source-aware autoplay. Builds a prioritized list of
+   * recommendation identifiers for the track's own source (YouTube RD mix,
+   * Spotify `sprec`, Deezer `dzrec`, Yandex `ymrec`, SoundCloud related), then
+   * falls back to a plain search on the artist + title — so autoplay works for
+   * every source, not just YouTube. Recently played tracks are excluded.
+   * Used when no custom `autoplayFetcher` is set; also callable directly.
+   */
+  public async resolveAutoplayTrack(lastTrack: TTrack): Promise<TTrack | null> {
+    const info = lastTrack.info ?? ({} as NonNullable<TTrack["info"]>);
+    const source = (info.sourceName ?? "").toLowerCase();
+    const identifier = info.identifier;
+    const exclude = this.recentTrackIdentifiers();
+    if (identifier) exclude.add(identifier);
+
+    const attempts: string[] = [];
+    switch (source) {
+      case "youtube":
+      case "youtubemusic":
+        if (identifier) {
+          attempts.push(`https://www.youtube.com/watch?v=${identifier}&list=RD${identifier}`);
+        }
+        break;
+      case "spotify":
+        if (identifier) attempts.push(`sprec:seed_tracks=${identifier}`);
+        break;
+      case "deezer":
+        if (identifier) attempts.push(`dzrec:${identifier}`);
+        break;
+      case "yandexmusic":
+        if (identifier) attempts.push(`ymrec:${identifier}`);
+        break;
+      case "soundcloud":
+        if (info.uri) attempts.push(`${info.uri.replace(/\/+$/, "")}/recommended`);
+        break;
+    }
+
+    // Universal fallback: search the same artist across the default source
+    const query = `${info.author ?? ""} ${info.title ?? ""}`.trim();
+    if (query !== "") {
+      if (source === "soundcloud") attempts.push(`scsearch:${query}`);
+      if (source === "applemusic") attempts.push(`amsearch:${query}`);
+      attempts.push(`ytsearch:${query}`);
+    }
+
+    for (const attempt of attempts) {
+      try {
+        const result = await this._node.rest.loadTracks(attempt);
+        const picked = this.pickAutoplayCandidate(result, exclude);
+        if (picked != null) return picked;
+      } catch {
+        // recommendation prefix unsupported on this node — try the next strategy
+      }
+    }
+    return null;
   }
 
   /** Fetches synced lyrics for current playing track or specified track via LRCLIB */

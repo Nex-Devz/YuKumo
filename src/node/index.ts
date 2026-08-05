@@ -1,5 +1,12 @@
 export { Node } from "./Node.ts";
 export type { PenaltyScore } from "./Node.ts";
+export { NodeLinkVoiceReceiver } from "./NodeLinkVoiceReceiver.ts";
+export type {
+  NodeLinkVoiceReceiverEvents,
+  NodeLinkVoiceReceiverOptions,
+  VoiceStartSpeaking,
+  VoiceEndSpeaking,
+} from "./NodeLinkVoiceReceiver.ts";
 export { NodeManager } from "./NodeManager.ts";
 export {
   LeastUsedSelector,

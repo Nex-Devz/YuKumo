@@ -1,4 +1,5 @@
 import { WebSocketClient } from "../ws/WebSocketClient.ts";
+import { NodeLinkVoiceReceiver } from "./NodeLinkVoiceReceiver.ts";
 import { RestClient } from "../rest/RestClient.ts";
 import type { NodeConfig, NodeState, NodeStats } from "../types/internal.ts";
 import { EventDispatcher } from "../ws/EventDispatcher.ts";
@@ -37,9 +38,15 @@ export class Node {
     nullPenalty: 0,
   };
   private _playerCount: number = 0;
+  /** null = not yet detected; resolved from config.isNodeLink or /v4/info on ready */
+  private _isNodeLink: boolean | null = null;
+
+  private _userId: string;
 
   public constructor(config: NodeConfig, userId: string) {
     this.config = config;
+    this._userId = userId;
+    this._isNodeLink = config.isNodeLink ?? null;
     this.events = new EventDispatcher();
 
     this.rest = new RestClient({
@@ -70,21 +77,7 @@ export class Node {
     this.ws.eventDispatcher.on("nodeReady", () => {
       if (this.ws.sessionId) {
         this.rest.sessionId = this.ws.sessionId;
-
-        // Lavalink only honors Session-Id on reconnect if resuming was enabled beforehand
-        if (config.resumeKey != null) {
-          this.rest
-            .updateSession(this.ws.sessionId, {
-              resuming: true,
-              timeout: config.resumeTimeout ?? 60,
-            })
-            .catch((error: unknown) => {
-              this.events.emit(
-                "debug",
-                `Failed to enable session resuming on ${this.id}: ${error instanceof Error ? error.message : String(error)}`,
-              );
-            });
-        }
+        void this.onSessionReady(config);
       }
     });
 
@@ -99,6 +92,47 @@ export class Node {
     });
   }
 
+  /**
+   * Post-ready session setup: detect NodeLink (once), then enable Lavalink
+   * session resuming when configured. NodeLink does not support resuming, so
+   * it is skipped there — reconnects instead re-send player state (the client
+   * already resyncs players whenever a session comes up non-resumed).
+   */
+  private async onSessionReady(config: NodeConfig): Promise<void> {
+    if (this._isNodeLink === null) {
+      try {
+        const info = await this.rest.getInfo();
+        this._isNodeLink = info?.isNodelink === true;
+      } catch {
+        this._isNodeLink = false;
+      }
+      if (this._isNodeLink) {
+        this.events.emit("debug", `Node ${this.id} detected as NodeLink`);
+      }
+    }
+
+    const wantsResuming = config.resuming === true || config.resumeKey != null;
+    if (!wantsResuming || this._isNodeLink === true || this.ws.sessionId == null) return;
+
+    try {
+      // Lavalink only honors Session-Id on reconnect if resuming was enabled beforehand
+      await this.rest.updateSession(this.ws.sessionId, {
+        resuming: true,
+        timeout: config.resumeTimeout ?? 60,
+      });
+    } catch (error: unknown) {
+      this.events.emit(
+        "debug",
+        `Failed to enable session resuming on ${this.id}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  /** True when the node was detected (or configured) as NodeLink */
+  public get isNodeLink(): boolean {
+    return this._isNodeLink === true;
+  }
+
   /** Gets the node unique name or identifier */
   public get id(): string {
     return this.config.name ?? `${this.config.host}:${this.config.port}`;
@@ -111,7 +145,23 @@ export class Node {
 
   /** Sets the Discord bot User ID for WebSocket handshake */
   public setUserId(userId: string): void {
+    this._userId = userId;
     this.ws.setUserId(userId);
+  }
+
+  /**
+   * Creates a voice receiver for a guild via NodeLink's /connection/data
+   * WebSocket (NodeLink only — Lavalink has no voice receive). Call
+   * `connect()` on the returned receiver, then listen for `startSpeaking` /
+   * `endSpeaking` events carrying base64 opus/pcm audio.
+   */
+  public createVoiceReceiver(guildId: string): NodeLinkVoiceReceiver {
+    return new NodeLinkVoiceReceiver({
+      nodeConfig: this.config,
+      userId: this._userId,
+      guildId,
+      clientName: "YuKumo/0.0.1",
+    });
   }
 
   /**
