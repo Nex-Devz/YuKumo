@@ -9,6 +9,14 @@ export interface NodeConfig {
   region?: string;
   resumeTimeout?: number;
   resumeKey?: string;
+  /** Enable Lavalink session resuming for this node (implied when resumeKey is set) */
+  resuming?: boolean;
+  /**
+   * Marks this node as NodeLink (PerformanC's Lavalink alternative).
+   * Auto-detected from /v4/info (`isNodelink`) when omitted. NodeLink does not
+   * support session resuming, so resuming is skipped for NodeLink nodes.
+   */
+  isNodeLink?: boolean;
   maxRetries?: number;
   retryDelay?: number;
   retryDelayMax?: number;
@@ -85,6 +93,22 @@ export interface ManagerOptions {
     autoReconnect?: boolean;
   };
   defaultSearchSource?: string;
+  /**
+   * Session + player resuming across bot restarts.
+   * - enabled: turn on Lavalink session resuming for all nodes and persist
+   *   session IDs to the storage adapter so a restarted process reclaims its
+   *   sessions (audio keeps playing on the node during the restart window).
+   * - timeout: seconds Lavalink keeps the session (and playback) alive after
+   *   the WS drops (default 60).
+   * - persistPlayers: persist full player state (queue, position, volume,
+   *   filters, repeat/autoplay flags) and restore players automatically on
+   *   init() (default true when enabled).
+   */
+  resuming?: {
+    enabled?: boolean;
+    timeout?: number;
+    persistPlayers?: boolean;
+  };
   defaultNodeSelector?: {
     pick: (
       nodes: Array<{ id: string; state: NodeState; penalties: { total: number }; playerCount: number }>,
@@ -130,6 +154,8 @@ export interface ManagerOptions {
     minAutoPlayMs?: number;
     /** Destroy the player this many ms after the queue ends (0/undefined disables; stayInVc overrides) */
     queueEmptyDestroyMs?: number;
+    /** Enable autoplay on every created player (source-aware recommendations when the queue ends) */
+    autoplay?: boolean;
   };
 }
 
@@ -238,6 +264,12 @@ export type EventMap = {
   lyricsNotFound: (guildId: string) => void;
   /** Lyrics plugin: a live lyrics line was emitted */
   lyricsLine: (guildId: string, line: unknown) => void;
+  /** Emitted after a player was rebuilt from persisted state on startup; resumedLive is true when the node session survived and audio never stopped */
+  playerRestored: (guildId: string, resumedLive: boolean) => void;
+  /** NodeLink mixer: a mix layer started */
+  mixStarted: (guildId: string, mix: unknown) => void;
+  /** NodeLink mixer: a mix layer ended */
+  mixEnded: (guildId: string, mix: unknown) => void;
 };
 
 export type EventName = keyof EventMap;

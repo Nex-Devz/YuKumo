@@ -411,6 +411,10 @@ export interface LavalinkInfo {
   sourceManagers: string[];
   filters: string[];
   plugins: PluginInfo[];
+  /** Present (true) when the node is NodeLink rather than Lavalink */
+  isNodelink?: boolean;
+  /** NodeLink reports the Node.js runtime version here instead of jvm/lavaplayer */
+  node?: string;
 }
 
 export interface RoutePlannerStatus {

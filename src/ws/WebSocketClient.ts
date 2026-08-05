@@ -43,6 +43,15 @@ export class WebSocketClient {
     return this._sessionId;
   }
 
+  /**
+   * Seeds a session ID before connect() so the Session-Id header is sent on the
+   * first connection attempt — used to reclaim a persisted Lavalink session
+   * after a full bot restart.
+   */
+  public setSessionId(id: string | null): void {
+    this._sessionId = id;
+  }
+
   public get resumed(): boolean {
     return this._resumed;
   }
@@ -99,7 +108,15 @@ export class WebSocketClient {
     this._state = "connecting";
     this.destroyRequested = false;
 
-    const { host, port, password, secure, resumeKey, connectTimeout = 15000 } = this.options.nodeConfig;
+    const {
+      host,
+      port,
+      password,
+      secure,
+      resumeKey,
+      resuming,
+      connectTimeout = 15000,
+    } = this.options.nodeConfig;
     const protocol = secure === true ? "wss" : "ws";
     const url = `${protocol}://${host}:${port}/v4/websocket`;
 
@@ -111,7 +128,7 @@ export class WebSocketClient {
       "Client-Name": this.options.clientName,
     };
 
-    if (resumeKey != null && this._sessionId != null) {
+    if ((resumeKey != null || resuming === true) && this._sessionId != null) {
       headers["Session-Id"] = this._sessionId;
     }
 
@@ -302,11 +319,14 @@ export class WebSocketClient {
    */
   private handlePluginEvent(event: Record<string, unknown>, guildId: string): void {
     switch (event.type) {
-      case "SegmentsLoaded": {
+      // "SponsorBlock…" variants are NodeLink's names for the same events
+      case "SegmentsLoaded":
+      case "SponsorBlockSegmentsLoadedEvent": {
         this.events.emit("segmentsLoaded", guildId, (event.segments as unknown[]) ?? []);
         break;
       }
-      case "SegmentSkipped": {
+      case "SegmentSkipped":
+      case "SponsorBlockSegmentSkippedEvent": {
         this.events.emit("segmentSkipped", guildId, event.segment);
         break;
       }
@@ -328,6 +348,15 @@ export class WebSocketClient {
       }
       case "LyricsLineEvent": {
         this.events.emit("lyricsLine", guildId, event.line ?? event);
+        break;
+      }
+      // NodeLink audio mixer events
+      case "MixStartedEvent": {
+        this.events.emit("mixStarted", guildId, event);
+        break;
+      }
+      case "MixEndedEvent": {
+        this.events.emit("mixEnded", guildId, event);
         break;
       }
       default: {
