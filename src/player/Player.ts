@@ -199,6 +199,8 @@ export class Player<TTrack extends TrackData = TrackData> {
     "lyricsFound",
     "lyricsNotFound",
     "lyricsLine",
+    "mixStarted",
+    "mixEnded",
   ] as const;
 
   private readonly boundPluginForwarders = new Map<string, (...args: unknown[]) => void>();

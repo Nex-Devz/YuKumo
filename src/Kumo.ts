@@ -250,7 +250,7 @@ export class YuKumo {
         const stored = await this.storage.get(this.sessionStorageKey(node.id));
         if (typeof stored === "string" && stored !== "") {
           node.ws.setSessionId(stored);
-          this.logger.debug?.(`Seeded persisted session ${stored} for node ${node.id}`);
+          this.logger.debug(`Seeded persisted session ${stored} for node ${node.id}`);
         }
       } catch {
         // missing/broken session records must not block startup
@@ -390,6 +390,14 @@ export class YuKumo {
       }
     }
     this.adapters.clear();
+    // Flush the freshest player snapshots (position!) before teardown so the
+    // next startup restores exactly where playback was
+    if (this.resuming.enabled && this.resuming.persistPlayers) {
+      await this.updatePlayersIndex();
+      await Promise.all(
+        this.players.getAll().map((p) => p.saveState().catch(() => undefined)),
+      );
+    }
     // DisconnectAllNodes keeps persisted queues on disk so restarts can restore them
     await this.players.destroyAll(DestroyReasons.DisconnectAllNodes);
     await this.nodes.destroyAll();
@@ -537,6 +545,10 @@ export class YuKumo {
     const node = nodeName != null ? this.nodes.get(nodeName) : this.nodes.pick(encodedTrack);
     if (node == null) return null;
     try {
+      // NodeLink ships lyrics natively on /v4/loadlyrics — no plugin required
+      if (node.isNodeLink) {
+        return await node.rest.loadLyrics(encodedTrack);
+      }
       return await node.rest.getLyrics(encodedTrack);
     } catch (err: unknown) {
       this.events.emit("debug", `getLyrics failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -927,7 +939,7 @@ export class YuKumo {
       (guildId: string, state: { time: number; position: number; connected: boolean; ping: number }) =>
         this.events.emit("playerUpdate", guildId, state),
     );
-    // Server-plugin events (SponsorBlock, LavaLyrics) — forwarded globally
+    // Server-plugin events (SponsorBlock, LavaLyrics, NodeLink mixer) — forwarded globally
     for (const name of [
       "segmentsLoaded",
       "segmentSkipped",
@@ -936,6 +948,8 @@ export class YuKumo {
       "lyricsFound",
       "lyricsNotFound",
       "lyricsLine",
+      "mixStarted",
+      "mixEnded",
     ] as const) {
       ws.on(name as EventName, ((...args: unknown[]) =>
         (this.events.emit as (...a: unknown[]) => void)(name, ...args)) as never);
