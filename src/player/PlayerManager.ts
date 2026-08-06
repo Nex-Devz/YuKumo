@@ -1,6 +1,22 @@
 import { Player } from "./Player.ts";
-import type { PlayerOptions } from "./Player.ts";
+import type { PlayerOptions, PlayerStatus } from "./Player.ts";
 import type { YuKumo } from "../Kumo.ts";
+
+/** Criteria for PlayerManager.find/findOne — all fields optional, AND-combined */
+export interface PlayerFindCriteria {
+  /** Node ID/name the player runs on */
+  node?: string;
+  /** One status or a list of acceptable statuses */
+  status?: PlayerStatus | PlayerStatus[];
+  voiceChannelId?: string;
+  textChannelId?: string;
+  autoplay?: boolean;
+  stayInVc?: boolean;
+  /** Shorthand for status "playing" (true) / not playing (false) */
+  playing?: boolean;
+  /** Custom predicate applied after the other criteria */
+  filter?: (player: Player) => boolean;
+}
 
 export class PlayerManager {
   private readonly players = new Map<string, Player>();
@@ -63,6 +79,36 @@ export class PlayerManager {
 
   public getByNode(nodeId: string): Player[] {
     return this.getAll().filter((p) => p.node.id === nodeId);
+  }
+
+  /**
+   * Finds players matching the given criteria — replaces manual getAll()
+   * filtering: `manager.players.find({ node: "india-01", status: "playing" })`.
+   */
+  public find(criteria: PlayerFindCriteria = {}): Player[] {
+    const statuses =
+      criteria.status == null
+        ? null
+        : Array.isArray(criteria.status)
+          ? criteria.status
+          : [criteria.status];
+
+    return this.getAll().filter((p) => {
+      if (criteria.node != null && p.node.id !== criteria.node) return false;
+      if (statuses != null && !statuses.includes(p.status)) return false;
+      if (criteria.voiceChannelId != null && p.voiceChannelId !== criteria.voiceChannelId) return false;
+      if (criteria.textChannelId != null && p.textChannelId !== criteria.textChannelId) return false;
+      if (criteria.autoplay != null && p.autoplay !== criteria.autoplay) return false;
+      if (criteria.stayInVc != null && p.stayInVc !== criteria.stayInVc) return false;
+      if (criteria.playing != null && (p.status === "playing") !== criteria.playing) return false;
+      if (criteria.filter != null && !criteria.filter(p)) return false;
+      return true;
+    });
+  }
+
+  /** First player matching the criteria, or undefined */
+  public findOne(criteria: PlayerFindCriteria = {}): Player | undefined {
+    return this.find(criteria)[0];
   }
 
   public async destroyAll(reason?: string): Promise<void> {

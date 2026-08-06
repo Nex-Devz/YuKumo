@@ -2,6 +2,25 @@
 
 All notable changes to the `yukumo` Lavalink client library will be documented in this file.
 
+## [1.7.0] - 2026-08-06
+
+### Added
+- **Session Resuming Across Restarts**: `ManagerOptions.resuming` (`{ enabled, timeout = 60, persistPlayers = true }`). Session IDs are persisted per node (`yukumo:session:<nodeId>`) and seeded pre-connect via the new `WebSocketClient.setSessionId()`, so a restarted bot reclaims its Lavalink sessions — **audio keeps playing through the restart**. `NodeConfig.resuming` enables it per node (Session-Id header no longer requires `resumeKey`).
+- **Player Restore ("keep playing")**: with `resuming.persistPlayers`, every player persists a full snapshot (`yukumo:player:<guildId>` — queue, position, volume, filters, repeat/autoplay/24-7 flags; refreshed on trackStart, every playerUpdate ~5s, queue mutations, and playback setters). `init()` calls `restorePlayers()`: on a resumed session the still-live server-side player is **adopted silently** (`adoptLiveState()` — no play request, zero audio gap); otherwise the bot rejoins voice and replays at the saved position. New `playerRestored (guildId, resumedLive)` event; new `Player.saveState()` / `restoreFromState()` / `enableStatePersistence()`. `YuKumo.destroy()` flushes final snapshots before teardown.
+- **Source-Aware Autoplay (all sources)**: default autoplay is no longer YouTube-only. `Player.resolveAutoplayTrack()` picks recommendation strategies per `sourceName` — YouTube/YT Music RD mix, Spotify `sprec:seed_tracks=`, Deezer `dzrec:`, Yandex `ymrec:`, SoundCloud `/recommended` — then falls back to `scsearch`/`amsearch`/`ytsearch` on artist + title. Recently played tracks (history + current) are excluded to prevent loops. `playerDefaults.autoplay` enables autoplay on every created player; custom `autoplayFetcher` still overrides.
+- **NodeLink Support**: auto-detected from `/v4/info` (`isNodelink`) or forced via `NodeConfig.isNodeLink`; `node.isNodeLink` / `player.isOnNodeLink` getters. Session resuming is automatically skipped on NodeLink (unsupported there — reconnects re-send player state instead). `getLyrics()` transparently routes to NodeLink's built-in `/v4/loadlyrics`. NodeLink's `SponsorBlockSegmentsLoadedEvent`/`SponsorBlockSegmentSkippedEvent` map to the existing `segmentsLoaded`/`segmentSkipped` events.
+- **NodeLink Extra Features**:
+  - REST: `loadLyrics(encoded, lang?)`, `loadChapters(encoded)`, `getMeaning(encoded)`, `getConnectionMetrics()`, mixer CRUD (`addMixLayer` / `getMixLayers` / `updateMixLayer` / `removeMixLayer` on `/v4/sessions/:id/players/:guildId/mix`).
+  - Player: `getNodeLinkLyrics(lang?)`, `getChapters()`, `getTrackMeaning()`, `setGaplessNext(track | null)` (gapless preload via `nextTrack`), `setFading({ trackStart | trackEnd | trackStop | seek | ducking: { duration, curve } })` (curves: linear, exponential, logarithmic, s-curve), mixer helpers.
+  - Voice receive: `NodeLinkVoiceReceiver` (`node.createVoiceReceiver(guildId)` / `player.createVoiceReceiver()`) — connects to `/connection/data`, emits `startSpeaking` and `endSpeaking` with base64 opus/pcm captured audio.
+  - Events: `mixStarted` / `mixEnded` (MixStartedEvent/MixEndedEvent) forwarded globally and per player.
+  - `updatePlayer()` accepts NodeLink extensions: `nextTrack`, `fading`, `track.audioTrackId`.
+- `LavalinkInfo` gains `isNodelink` / `node` fields.
+
+### Changed
+- `pause()`, `resume()`, `setVolume()`, `setLoop()`, `setAutoplay()` now schedule a state snapshot when state persistence is on.
+- Queue persistence and state persistence share the `Queue.onChanged` hook (both fire on mutations).
+
 ## [1.6.0] - 2026-08-04
 
 ### Added

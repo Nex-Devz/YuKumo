@@ -33,6 +33,10 @@ export class Queue<T> {
    */
   public onChanged?: () => void;
 
+  /** Serializes lock() sections; mirrors Player's _trackEndChain pattern */
+  private _lockChain: Promise<unknown> = Promise.resolve();
+  private _lockDepth = 0;
+
   public constructor(options?: QueueOptions) {
     this.maxSize = options?.maxSize ?? 0;
     this.maxHistorySize = options?.maxHistorySize ?? 50;
@@ -447,6 +451,68 @@ export class Queue<T> {
     this.tracks.push(...upcoming);
     this.notifyChange();
     return this;
+  }
+
+  /**
+   * Runs `fn` exclusively — concurrent lock() calls queue up and execute one
+   * at a time, so multi-step queue edits (add + shuffle, bulk remove) can't
+   * interleave when several commands fire simultaneously.
+   * Errors thrown by `fn` propagate to the caller but never break the chain.
+   */
+  public lock<R>(fn: () => R | Promise<R>): Promise<R> {
+    const run = this._lockChain.then(async () => {
+      this._lockDepth++;
+      try {
+        return await fn();
+      } finally {
+        this._lockDepth--;
+      }
+    });
+    this._lockChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  /** True while a lock() section is currently executing */
+  public get isLocked(): boolean {
+    return this._lockDepth > 0;
+  }
+
+  /**
+   * Removes duplicate tracks, keeping the first occurrence of each. The
+   * currently playing track is never removed. Returns the removed tracks.
+   * @param keyFn Custom identity — defaults to `encoded`, then `info.identifier`, then object identity
+   */
+  public unique(keyFn?: (track: T) => unknown): T[] {
+    const keyOf =
+      keyFn ??
+      ((track: T): unknown => {
+        const t = track as { encoded?: string; info?: { identifier?: string } };
+        return t.encoded ?? t.info?.identifier ?? track;
+      });
+
+    const seen = new Set<unknown>();
+    // Seed with the current track so duplicates of it elsewhere are dropped
+    const current = this.currentTrack;
+    if (current != null) seen.add(keyOf(current));
+
+    const removed: T[] = [];
+    for (let i = 0; i < this.tracks.length; i++) {
+      if (i === this.currentIndex) continue; // never remove the playing track
+      const key = keyOf(this.tracks[i] as T);
+      if (seen.has(key)) {
+        removed.push(...this.tracks.splice(i, 1));
+        if (this.currentIndex > i) this.currentIndex--;
+        i--;
+      } else {
+        seen.add(key);
+      }
+    }
+
+    if (removed.length > 0) this.notifyChange();
+    return removed;
   }
 
   /** Exports queue state for persistence or serialization */

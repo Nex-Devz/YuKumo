@@ -5,6 +5,7 @@ import type { TrackData, PlayerState } from "../types/protocol.ts";
 import type { InternalVoiceState, RepeatMode } from "../types/internal.ts";
 import { PlayerNotConnectedError, PlayerError } from "../errors/index.ts";
 import { EventDispatcher } from "../ws/EventDispatcher.ts";
+import { TTLCache } from "../utils/TTLCache.ts";
 import type { EventName, EventCallback } from "../types/internal.ts";
 import { DestroyReasons } from "../types/constants.ts";
 
@@ -92,6 +93,12 @@ export class Player<TTrack extends TrackData = TrackData> {
   /** Custom data map for developers to store persistent session variables */
   public readonly data: Map<string, any> = new Map();
 
+  /**
+   * Temporary per-player data with optional TTL — `cache.set("vote", true, 60_000)`
+   * auto-expires after 60s. Use `data` for permanent values.
+   */
+  public readonly cache = new TTLCache<string, any>();
+
   /** Whether autoplay is enabled when queue ends */
   public autoplay: boolean = false;
   /** Custom autoplay recommendation fetcher hook */
@@ -145,6 +152,11 @@ export class Player<TTrack extends TrackData = TrackData> {
     reject: (err: Error) => void;
     timer: ReturnType<typeof setTimeout>;
   }> = [];
+  private playingWaiters: Array<{
+    resolve: () => void;
+    reject: (err: Error) => void;
+    timer: ReturnType<typeof setTimeout>;
+  }> = [];
 
   private readonly boundOnTrackEnd = (guildId: string, track: TrackData, reason: string) => {
     if (guildId !== this.guildId) return;
@@ -162,6 +174,7 @@ export class Player<TTrack extends TrackData = TrackData> {
     this._lastTrackStartTs = Date.now();
     this.cancelQueueEmptyDestroy();
     this.scheduleStateSave();
+    this.settlePlayingWaiters();
     this.events.emit("trackStart", guildId, track);
   };
 
@@ -326,6 +339,15 @@ export class Player<TTrack extends TrackData = TrackData> {
   /** Whether the player has voice credentials and its node is connected */
   public get connected(): boolean {
     return this.hasVoiceCredentials && this._node.state === "connected";
+  }
+
+  /**
+   * DX alias for `connected` — voice credentials held and node reachable.
+   * Pairs with waitForVoiceReady():
+   * `if (!player.isVoiceReady) await player.waitForVoiceReady();`
+   */
+  public get isVoiceReady(): boolean {
+    return this.connected;
   }
 
   /** Alias for this.filters (FilterChain instance) — matches other wrappers' naming */
@@ -1041,6 +1063,50 @@ export class Player<TTrack extends TrackData = TrackData> {
   }
 
   /**
+   * Resolves once the node reports the track actually started
+   * (TrackStartEvent) — so embeds/buttons update when audio is really
+   * playing, without manually listening for trackStart:
+   * `await player.play(track); await player.waitUntilPlaying();`
+   * Resolves immediately when already playing; rejects on destroy or after
+   * `timeoutMs` (default 15000).
+   */
+  public waitUntilPlaying(timeoutMs: number = 15000): Promise<void> {
+    if (this._destroyed) {
+      return Promise.reject(new PlayerError("Player is destroyed", this.guildId));
+    }
+    if (this._status === "playing") return Promise.resolve();
+
+    return new Promise<void>((resolve, reject) => {
+      const waiter = {
+        resolve,
+        reject,
+        timer: setTimeout(() => {
+          this.playingWaiters = this.playingWaiters.filter((w) => w !== waiter);
+          reject(
+            new PlayerError(`Playback did not start within ${timeoutMs}ms`, this.guildId),
+          );
+        }, timeoutMs),
+      };
+      (waiter.timer as { unref?: () => void }).unref?.();
+      this.playingWaiters.push(waiter);
+    });
+  }
+
+  private settlePlayingWaiters(error?: Error): void {
+    if (this.playingWaiters.length === 0) return;
+    const waiters = this.playingWaiters;
+    this.playingWaiters = [];
+    for (const waiter of waiters) {
+      clearTimeout(waiter.timer);
+      if (error != null) {
+        waiter.reject(error);
+      } else {
+        waiter.resolve();
+      }
+    }
+  }
+
+  /**
    * Begins playback of the given track. If none provided, plays next in queue.
    */
   public async play(track?: TrackData, options?: PlayOptions): Promise<void> {
@@ -1545,11 +1611,13 @@ export class Player<TTrack extends TrackData = TrackData> {
     this._node.playerCount = Math.max(0, this._node.playerCount - 1);
     this.kumo?.players?.uncache(this.guildId, this as unknown as Player);
     this.settleVoiceReadyWaiters(new PlayerError("Player is destroyed", this.guildId));
+    this.settlePlayingWaiters(new PlayerError("Player is destroyed", this.guildId));
     this.removeNodeListeners();
     this.queue.clear();
     this.queue.clearHistory();
     this.filters.clear();
     this.data.clear();
+    this.cache.clear();
     this.events.removeAllListeners();
 
     if (this._persistQueue && reason !== DestroyReasons.DisconnectAllNodes) {

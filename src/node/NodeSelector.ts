@@ -26,7 +26,7 @@ export class RegionSelector implements NodeSelector {
 
   public pick(nodes: Node[], guildId: string): Node | null {
     if (nodes.length === 0) return null;
-    const connected = nodes.filter((n) => n.state === "connected");
+    const connected = nodes.filter((n) => n.state === "connected" && !n.maintenance);
     if (connected.length === 0) return null;
 
     const regionalNodes = connected.filter((n) => n.config.region === this.region);
@@ -45,7 +45,7 @@ export class RegionSelector implements NodeSelector {
 export class LeastUsedSelector implements NodeSelector {
   public pick(nodes: Node[], _guildId: string): Node | null {
     if (nodes.length === 0) return null;
-    const connected = nodes.filter((n) => n.state === "connected");
+    const connected = nodes.filter((n) => n.state === "connected" && !n.maintenance);
     if (connected.length === 0) return null;
 
     let best = connected[0] as Node;
@@ -69,7 +69,7 @@ export class LeastUsedSelector implements NodeSelector {
 export class LeastPenaltySelector implements NodeSelector {
   public pick(nodes: Node[], _guildId: string): Node | null {
     if (nodes.length === 0) return null;
-    const connected = nodes.filter((n) => n.state === "connected");
+    const connected = nodes.filter((n) => n.state === "connected" && !n.maintenance);
     if (connected.length === 0) return null;
 
     let best = connected[0] as Node;
@@ -94,7 +94,7 @@ export class LeastPenaltySelector implements NodeSelector {
 export class CpuUsageSelector implements NodeSelector {
   public pick(nodes: Node[], _guildId: string): Node | null {
     if (nodes.length === 0) return null;
-    const connected = nodes.filter((n) => n.state === "connected");
+    const connected = nodes.filter((n) => n.state === "connected" && !n.maintenance);
     if (connected.length === 0) return null;
 
     let best = connected[0] as Node;
@@ -119,7 +119,7 @@ export class CpuUsageSelector implements NodeSelector {
 export class MemoryUsageSelector implements NodeSelector {
   public pick(nodes: Node[], _guildId: string): Node | null {
     if (nodes.length === 0) return null;
-    const connected = nodes.filter((n) => n.state === "connected");
+    const connected = nodes.filter((n) => n.state === "connected" && !n.maintenance);
     if (connected.length === 0) return null;
 
     let best = connected[0] as Node;
@@ -144,7 +144,7 @@ export class MemoryUsageSelector implements NodeSelector {
 export class LowestPingSelector implements NodeSelector {
   public pick(nodes: Node[], _guildId: string): Node | null {
     if (nodes.length === 0) return null;
-    const connected = nodes.filter((n) => n.state === "connected");
+    const connected = nodes.filter((n) => n.state === "connected" && !n.maintenance);
     if (connected.length === 0) return null;
 
     let best = connected[0] as Node;
@@ -171,7 +171,7 @@ export class RoundRobinSelector implements NodeSelector {
 
   public pick(nodes: Node[], _guildId: string): Node | null {
     if (nodes.length === 0) return null;
-    const connected = nodes.filter((n) => n.state === "connected");
+    const connected = nodes.filter((n) => n.state === "connected" && !n.maintenance);
     if (connected.length === 0) return null;
 
     this.index = this.index % connected.length;
@@ -192,7 +192,7 @@ export class RoundRobinSelector implements NodeSelector {
 export class RandomSelector implements NodeSelector {
   public pick(nodes: Node[], _guildId: string): Node | null {
     if (nodes.length === 0) return null;
-    const connected = nodes.filter((n) => n.state === "connected");
+    const connected = nodes.filter((n) => n.state === "connected" && !n.maintenance);
     if (connected.length === 0) return null;
 
     const index = Math.floor(Math.random() * connected.length);

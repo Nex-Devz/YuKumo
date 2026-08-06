@@ -827,6 +827,30 @@ export class YuKumo {
     return this.players.getAll();
   }
 
+  /**
+   * Finds players by criteria — `kumo.findPlayers({ node: "india-01", status: "playing" })`.
+   * See PlayerManager.find for all supported fields.
+   */
+  public findPlayers(
+    criteria: import("./player/PlayerManager.ts").PlayerFindCriteria = {},
+  ): Player[] {
+    return this.players.find(criteria);
+  }
+
+  /**
+   * Applies an operation to all active players (or a criteria-matched subset)
+   * concurrently. One failing player never blocks the rest — results come
+   * back as Promise.allSettled entries in player order.
+   * `await kumo.broadcast((p) => p.setVolume(80));`
+   */
+  public async broadcast(
+    fn: (player: Player) => void | Promise<void>,
+    criteria?: import("./player/PlayerManager.ts").PlayerFindCriteria,
+  ): Promise<PromiseSettledResult<void>[]> {
+    const targets = criteria != null ? this.players.find(criteria) : this.players.getAll();
+    return Promise.allSettled(targets.map(async (player) => fn(player)));
+  }
+
   /** Checks if player exists for a guild */
   public hasPlayer(guildId: string): boolean {
     return this.players.has(guildId);

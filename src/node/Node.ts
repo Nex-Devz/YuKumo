@@ -40,6 +40,7 @@ export class Node {
   private _playerCount: number = 0;
   /** null = not yet detected; resolved from config.isNodeLink or /v4/info on ready */
   private _isNodeLink: boolean | null = null;
+  private _maintenance: boolean = false;
 
   private _userId: string;
 
@@ -131,6 +132,48 @@ export class Node {
   /** True when the node was detected (or configured) as NodeLink */
   public get isNodeLink(): boolean {
     return this._isNodeLink === true;
+  }
+
+  /** True while the node is in maintenance mode (drained, no new players) */
+  public get maintenance(): boolean {
+    return this._maintenance;
+  }
+
+  /**
+   * Toggles maintenance mode. While enabled, load balancing assigns no new
+   * players to this node; existing players keep playing and the node drains
+   * naturally as they end — then it's safe to restart/update the node.
+   */
+  public setMaintenance(enabled: boolean): this {
+    if (this._maintenance === enabled) return this;
+    this._maintenance = enabled;
+    this.events.emit(
+      "debug",
+      `Node ${this.id} maintenance mode ${enabled ? "enabled — draining, no new players" : "disabled"}`,
+    );
+    return this;
+  }
+
+  /**
+   * Resolves once the node has no players left (drained). Typical flow:
+   * `node.setMaintenance(true); await node.drain(); // restart node`
+   * Polls playerCount; rejects after `timeoutMs` when > 0 (0 = wait forever).
+   */
+  public drain(timeoutMs: number = 0, pollMs: number = 1000): Promise<void> {
+    if (this._playerCount <= 0) return Promise.resolve();
+    const startedAt = Date.now();
+    return new Promise<void>((resolve, reject) => {
+      const timer = setInterval(() => {
+        if (this._playerCount <= 0) {
+          clearInterval(timer);
+          resolve();
+        } else if (timeoutMs > 0 && Date.now() - startedAt >= timeoutMs) {
+          clearInterval(timer);
+          reject(new Error(`Node ${this.id} did not drain within ${timeoutMs}ms (${this._playerCount} players left)`));
+        }
+      }, pollMs);
+      (timer as { unref?: () => void }).unref?.();
+    });
   }
 
   /** Gets the node unique name or identifier */
