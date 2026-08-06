@@ -16,6 +16,15 @@ All notable changes to the `yukumo` Lavalink client library will be documented i
   - Events: `mixStarted` / `mixEnded` (MixStartedEvent/MixEndedEvent) forwarded globally and per player.
   - `updatePlayer()` accepts NodeLink extensions: `nextTrack`, `fading`, `track.audioTrackId`.
 - `LavalinkInfo` gains `isNodelink` / `node` fields.
+- **DX Utilities**:
+  - `player.waitUntilPlaying(timeoutMs = 15000)` — resolves when the node reports the track actually started (no manual `trackStart` listener); resolves immediately when already playing, rejects on destroy/timeout.
+  - `player.isVoiceReady` getter — voice credentials held + node connected; pairs with `waitForVoiceReady()`.
+  - `queue.lock(fn)` — promise-chain mutex serializing multi-step queue edits (add + shuffle) against concurrent commands; `queue.isLocked` getter. Errors propagate without breaking the chain.
+  - `queue.unique(keyFn?)` — removes duplicate tracks (default key: `encoded` → `info.identifier`), keeps first occurrence, never removes the playing track, returns removed tracks.
+  - `players.find(criteria)` / `players.findOne(criteria)` / `kumo.findPlayers(criteria)` — filter by `node`, `status` (single or array), `voiceChannelId`, `textChannelId`, `autoplay`, `stayInVc`, `playing`, or custom `filter` predicate.
+  - **Node maintenance mode** — `node.setMaintenance(true)`: load balancers assign no new players, existing players keep playing, node drains naturally; `node.maintenance` getter and `node.drain(timeoutMs?, pollMs?)` which resolves at zero players. Safe node restarts for hosting providers.
+  - `player.cache` — per-player `TTLCache` (`cache.set("vote", true, 60_000)` auto-expires); lazy expiry, no timers held; cleared on destroy. `TTLCache` exported. Permanent values stay on `player.data`.
+  - `kumo.broadcast(fn, criteria?)` — applies an operation to all (or criteria-matched) players via `Promise.allSettled`; one failing player never blocks the rest.
 
 ### Changed
 - `pause()`, `resume()`, `setVolume()`, `setLoop()`, `setAutoplay()` now schedule a state snapshot when state persistence is on.
