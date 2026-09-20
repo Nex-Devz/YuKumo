@@ -23,6 +23,34 @@ function makeTrack(encoded: string): TrackData {
 }
 import { PluginManager } from "./PluginManager.ts";
 import type { Plugin } from "./Plugin.ts";
+import {
+  createLavaSrcPlugin,
+  createSponsorBlockPlugin,
+  createFloweryTTSPlugin,
+} from "./LavaPlugins.ts";
+
+describe("server-plugin markers", () => {
+  it("createLavaSrcPlugin records options and marks itself server-side", () => {
+    const plugin = createLavaSrcPlugin({ spotify: { clientId: "abc" } });
+    expect(plugin.name).toBe("lavasrc");
+    expect(plugin.isServerPlugin).toBe(true);
+    expect(plugin.options.spotify?.clientId).toBe("abc");
+  });
+
+  it("createSponsorBlockPlugin defaults options to an empty object", () => {
+    const plugin = createSponsorBlockPlugin();
+    expect(plugin.name).toBe("sponsorblock");
+    expect(plugin.isServerPlugin).toBe(true);
+    expect(plugin.options).toEqual({});
+  });
+
+  it("markers register in the PluginManager and carry no init side effect", async () => {
+    const manager = new PluginManager();
+    manager.register(createFloweryTTSPlugin({ voice: "default" }));
+    await manager.ready();
+    expect(manager.get("flowerytts")?.name).toBe("flowerytts");
+  });
+});
 
 describe("PluginManager", () => {
   describe("register", () => {

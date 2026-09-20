@@ -160,13 +160,13 @@ export class Player<TTrack extends TrackData = TrackData> {
   public readonly events: EventDispatcher;
   
   /** Custom data map for developers to store persistent session variables */
-  public readonly data: Map<string, any> = new Map();
+  public readonly data: Map<string, unknown> = new Map();
 
   /**
    * Temporary per-player data with optional TTL — `cache.set("vote", true, 60_000)`
    * auto-expires after 60s. Use `data` for permanent values.
    */
-  public readonly cache = new TTLCache<string, any>();
+  public readonly cache = new TTLCache<string, unknown>();
 
   /** Whether autoplay is enabled when queue ends */
   public autoplay: boolean = false;
@@ -243,7 +243,10 @@ export class Player<TTrack extends TrackData = TrackData> {
   private readonly boundOnTrackStart = (guildId: string, track: TrackData) => {
     if (guildId !== this.guildId) return;
     this._status = "playing";
-    this._paused = false;
+    // Do NOT reset _paused here: a track started with `{ paused: true }` is
+    // reported by Lavalink as a TrackStartEvent too, and PlayerUpdateEvent has
+    // no `paused` field to recover the truth from. _paused was already set by
+    // playTrack before the PATCH was sent.
     this._lastTrackStartTs = Date.now();
     this.cancelQueueEmptyDestroy();
     this.scheduleStateSave();
@@ -389,7 +392,7 @@ export class Player<TTrack extends TrackData = TrackData> {
     return this._textChannelId;
   }
 
-  /** Alias for voiceChannelId — matches Shoukaku/Erela convention */
+  /** Short alias for {@link voiceChannelId}. */
   public get voiceId(): string {
     return this._voiceChannelId;
   }
@@ -399,7 +402,7 @@ export class Player<TTrack extends TrackData = TrackData> {
     this._voiceChannelId = id;
   }
 
-  /** Alias for textChannelId — matches Shoukaku/Erela convention */
+  /** Short alias for {@link textChannelId}. */
   public get textId(): string | null {
     return this._textChannelId;
   }
@@ -587,10 +590,10 @@ export class Player<TTrack extends TrackData = TrackData> {
     const history = this.queue.historyList;
     for (const track of history.slice(Math.max(0, history.length - limit))) {
       const id = (track as TrackData).info?.identifier;
-      if (id) ids.add(id);
+      if (id != null && id.length > 0) ids.add(id);
     }
     const currentId = this.currentTrack?.info?.identifier;
-    if (currentId) ids.add(currentId);
+    if (currentId != null && currentId.length > 0) ids.add(currentId);
     return ids;
   }
 
@@ -624,28 +627,30 @@ export class Player<TTrack extends TrackData = TrackData> {
     const info = lastTrack.info ?? ({} as NonNullable<TTrack["info"]>);
     const source = (info.sourceName ?? "").toLowerCase();
     const identifier = info.identifier;
+    const hasId = identifier != null && identifier.length > 0;
     const exclude = this.recentTrackIdentifiers();
-    if (identifier) exclude.add(identifier);
+    if (hasId) exclude.add(identifier);
 
     const attempts: string[] = [];
     switch (source) {
       case "youtube":
       case "youtubemusic":
-        if (identifier) {
+        if (hasId) {
           attempts.push(`https://www.youtube.com/watch?v=${identifier}&list=RD${identifier}`);
         }
         break;
       case "spotify":
-        if (identifier) attempts.push(`sprec:seed_tracks=${identifier}`);
+        if (hasId) attempts.push(`sprec:seed_tracks=${identifier}`);
         break;
       case "deezer":
-        if (identifier) attempts.push(`dzrec:${identifier}`);
+        if (hasId) attempts.push(`dzrec:${identifier}`);
         break;
       case "yandexmusic":
-        if (identifier) attempts.push(`ymrec:${identifier}`);
+        if (hasId) attempts.push(`ymrec:${identifier}`);
         break;
       case "soundcloud":
-        if (info.uri) attempts.push(`${info.uri.replace(/\/+$/, "")}/recommended`);
+        if (info.uri != null && info.uri.length > 0)
+          attempts.push(`${info.uri.replace(/\/+$/, "")}/recommended`);
         break;
     }
 
@@ -748,6 +753,28 @@ export class Player<TTrack extends TrackData = TrackData> {
     return this.currentTrack;
   }
 
+  /**
+   * Jumps straight to the track at `index` in the queue and starts playing it,
+   * replacing whatever is currently on the node. Unlike calling
+   * `queue.skipTo()` directly, this drives the node so the cursor never points
+   * at a not-yet-played track while old audio keeps running (which would
+   * silently skip a track on the next natural end). Skipped-over tracks go to
+   * history. Returns the now-playing track, or null if the index is invalid.
+   *
+   * @param index 0-based index into the current queue
+   */
+  public async skipTo(index: number): Promise<TTrack | null> {
+    if (this._destroyed) throw new PlayerError("Player is destroyed", this.guildId);
+
+    const target = this.queue.skipTo(index);
+    if (target == null) return null;
+
+    // The queue cursor now points at `target`; make the node play it so audio
+    // matches the queue. playTrack replaces the current track on the node.
+    await this.playTrack(target);
+    return this.currentTrack;
+  }
+
   /** Reassigns player to a new Lavalink node (for node failover / load balancing) */
   public async setNode(node: Node): Promise<void> {
     const oldNode = this._node;
@@ -791,8 +818,7 @@ export class Player<TTrack extends TrackData = TrackData> {
 
   /**
    * Returns a slice of the queue. Without an end index it returns everything
-   * from `start` (including the currently playing track). Mirrors Poru's
-   * `player.get(index, end)`.
+   * from `start` (including the currently playing track).
    */
   public get(start: number = 0, end?: number): TTrack[] {
     const tracks = this.queue.tracksList;
@@ -811,7 +837,7 @@ export class Player<TTrack extends TrackData = TrackData> {
     return this;
   }
 
-  /** Whether single-track repeat is on — Magmastream/erela.js style boolean */
+  /** Whether single-track repeat is on. */
   public get trackRepeat(): boolean {
     return this.queue.repeatMode === "track";
   }
@@ -821,7 +847,7 @@ export class Player<TTrack extends TrackData = TrackData> {
     this.setLoop(enabled ? "track" : this.queue.repeatMode === "queue" ? "queue" : "none");
   }
 
-  /** Whether whole-queue repeat is on — Magmastream/erela.js style boolean */
+  /** Whether whole-queue repeat is on. */
   public get queueRepeat(): boolean {
     return this.queue.repeatMode === "queue";
   }
@@ -831,19 +857,19 @@ export class Player<TTrack extends TrackData = TrackData> {
     this.setLoop(enabled ? "queue" : this.queue.repeatMode === "track" ? "track" : "none");
   }
 
-  /** Turns single-track repeat on/off — Magmastream/erela.js convention */
+  /** Turns single-track repeat on/off. */
   public setTrackRepeat(enabled: boolean = true): this {
     this.trackRepeat = enabled;
     return this;
   }
 
-  /** Turns whole-queue repeat on/off — Magmastream/erela.js convention */
+  /** Turns whole-queue repeat on/off. */
   public setQueueRepeat(enabled: boolean = true): this {
     this.queueRepeat = enabled;
     return this;
   }
 
-  /** Unified pause/resume toggle — matches Erela.js/Magmastream convention */
+  /** Unified pause/resume toggle: `setPaused(true)` pauses, `setPaused(false)` resumes. */
   public async setPaused(state: boolean): Promise<void> {
     return state ? this.pause() : this.resume();
   }
@@ -869,9 +895,9 @@ export class Player<TTrack extends TrackData = TrackData> {
    * Fetches lyrics for the current track or a specified track using Lavalink Lyrics plugin.
    * @param encodedTrack Optional encoded track. Defaults to the currently playing track.
    */
-  public async getLyrics(encodedTrack?: string | null): Promise<any> {
+  public async getLyrics(encodedTrack?: string | null): Promise<unknown> {
     const trackToUse = encodedTrack ?? this.queue.currentTrack?.encoded;
-    if (!trackToUse) return null;
+    if (trackToUse == null || trackToUse.length === 0) return null;
     return this.kumo.getLyrics(trackToUse);
   }
 
@@ -1190,12 +1216,17 @@ export class Player<TTrack extends TrackData = TrackData> {
     if (this._destroyed) {
       return Promise.reject(new PlayerError("Player is destroyed", this.guildId));
     }
-    if (this.hasVoiceCredentials || !this.kumo?.events) return Promise.resolve();
+    if (this.hasVoiceCredentials || this.kumo?.events == null) return Promise.resolve();
 
     // Credentials may already be sitting in the global tracker (e.g. player
     // recreated while the bot never left the channel)
     const globalVoice = this.kumo?.voice?.getVoiceState(this.guildId);
-    if (globalVoice != null && globalVoice.token && globalVoice.endpoint && globalVoice.sessionId) {
+    if (
+      globalVoice != null &&
+      globalVoice.token != null &&
+      globalVoice.endpoint != null &&
+      globalVoice.sessionId != null
+    ) {
       this.setVoiceState(globalVoice);
       return Promise.resolve();
     }
@@ -1327,7 +1358,7 @@ export class Player<TTrack extends TrackData = TrackData> {
       const volume = options?.volume != null ? Math.max(0, Math.min(1000, options.volume)) : this._volume;
       const paused = options?.paused ?? this._paused;
 
-      await this._node.rest.updatePlayer(
+      const playerState = await this._node.rest.updatePlayer(
         sessionId,
         this.guildId,
         {
@@ -1350,8 +1381,17 @@ export class Player<TTrack extends TrackData = TrackData> {
       );
       this._volume = volume;
       this._paused = paused;
-      this._position = options?.position ?? 0;
-      this._positionTimestamp = Date.now();
+
+      // A noReplace=true request that found a track already playing does NOT
+      // start the requested track — the response reports the still-playing
+      // track. Zeroing the position baseline in that case would corrupt
+      // interpolation and persisted positions while the old track keeps
+      // playing, so only reset when this request actually adopted the track.
+      const playingEncoded = playerState?.track?.encoded ?? null;
+      if (playingEncoded == null || playingEncoded === track.encoded) {
+        this._position = options?.position ?? 0;
+        this._positionTimestamp = Date.now();
+      }
       this.cancelQueueEmptyDestroy();
     } catch (error) {
       // Restore the exact prior status — if a previous track was still playing
@@ -1505,7 +1545,7 @@ export class Player<TTrack extends TrackData = TrackData> {
     await this.setFilters();
   }
 
-  // ─── Individual filter setters (Shoukaku / lavalink-client style) ────────
+  // ─── Individual filter setters (one call per Lavalink filter band) ───────
 
   /** Replaces the equalizer bands filter and syncs it to the node */
   public async setEqualizer(bands: EqualizerBand[] = []): Promise<void> {
@@ -1627,6 +1667,24 @@ export class Player<TTrack extends TrackData = TrackData> {
     await this.setFilters();
   }
 
+  /**
+   * Sets a raw server-side plugin filter and syncs it to the node. Works with
+   * any filter plugin installed on the Lavalink server (LavaDSPX's `highPass`,
+   * `lowPass`, `normalization`, `echo`, etc.); `settings` passes through under
+   * Lavalink v4's `pluginFilters`. Pass `false`/`null` to remove it.
+   *
+   * @example
+   * await player.setPluginFilter("normalization", { maxAmplitude: 0.75, adaptive: true });
+   * await player.setPluginFilter("echo", { echoLength: 0.5, decay: 0.3 });
+   */
+  public async setPluginFilter(
+    name: string,
+    settings: Record<string, unknown> | false | null,
+  ): Promise<void> {
+    this.filters.setPluginFilter(name, settings);
+    await this.setFilters();
+  }
+
   /** Sets autoplay state and optional custom recommendation fetcher */
   public setAutoplay(enabled: boolean = true, fetcher?: (lastTrack: TTrack) => Promise<TTrack | null>): this {
     this.autoplay = enabled;
@@ -1657,7 +1715,7 @@ export class Player<TTrack extends TrackData = TrackData> {
   public async getNodeLinkLyrics(lang?: string, track?: TTrack): Promise<unknown> {
     if (this._destroyed) throw new PlayerError("Player is destroyed", this.guildId);
     const encoded = (track ?? this.currentTrack)?.encoded;
-    if (!encoded) return null;
+    if (encoded == null || encoded.length === 0) return null;
     return this._node.rest.loadLyrics(encoded, lang);
   }
 
@@ -1665,7 +1723,7 @@ export class Player<TTrack extends TrackData = TrackData> {
   public async getChapters(track?: TTrack): Promise<unknown> {
     if (this._destroyed) throw new PlayerError("Player is destroyed", this.guildId);
     const encoded = (track ?? this.currentTrack)?.encoded;
-    if (!encoded) return null;
+    if (encoded == null || encoded.length === 0) return null;
     return this._node.rest.loadChapters(encoded);
   }
 
@@ -1673,7 +1731,7 @@ export class Player<TTrack extends TrackData = TrackData> {
   public async getTrackMeaning(track?: TTrack): Promise<unknown> {
     if (this._destroyed) throw new PlayerError("Player is destroyed", this.guildId);
     const encoded = (track ?? this.currentTrack)?.encoded;
-    if (!encoded) return null;
+    if (encoded == null || encoded.length === 0) return null;
     return this._node.rest.getMeaning(encoded);
   }
 
@@ -1944,7 +2002,7 @@ export class Player<TTrack extends TrackData = TrackData> {
   public async sendVoiceUpdate(): Promise<void> {
     if (this._destroyed || this._voiceStateSent) return;
     const { token, endpoint, sessionId: voiceSessionId } = this._voiceState;
-    if (!token || !endpoint || !voiceSessionId) return;
+    if (token == null || endpoint == null || voiceSessionId == null) return;
 
     const sessionId = this._node.rest.sessionId;
     if (sessionId == null) return;
@@ -1979,7 +2037,12 @@ export class Player<TTrack extends TrackData = TrackData> {
 
     if (!this.hasVoiceCredentials) {
       const globalVoice = this.kumo?.voice?.getVoiceState(this.guildId);
-      if (globalVoice != null && globalVoice.token && globalVoice.endpoint && globalVoice.sessionId) {
+      if (
+        globalVoice != null &&
+        globalVoice.token != null &&
+        globalVoice.endpoint != null &&
+        globalVoice.sessionId != null
+      ) {
         this.setVoiceState(globalVoice);
       }
     }
@@ -2117,27 +2180,27 @@ export class Player<TTrack extends TrackData = TrackData> {
     return this._destroyed;
   }
 
-  /** Alias for `status === "playing" && !paused` — Poru/Riffy convention */
+  /** True when a track is actively playing (`status === "playing"` and not paused). */
   public get isPlaying(): boolean {
     return this._status === "playing" && !this._paused;
   }
 
-  /** Alias for `paused` — Poru/Riffy convention */
+  /** Alias for `paused`. */
   public get isPaused(): boolean {
     return this._paused;
   }
 
-  /** Alias for `connected` — Poru/Riffy convention */
+  /** Alias for `connected`. */
   public get isConnected(): boolean {
     return this.connected;
   }
 
-  /** Alias for `destroyed` — Poru/Riffy convention */
+  /** Alias for `destroyed`. */
   public get isDestroyed(): boolean {
     return this._destroyed;
   }
 
-  /** Alias for `getAutoplay()` — Poru/Riffy convention */
+  /** Alias for `getAutoplay()`. */
   public get isAutoplay(): boolean {
     return this.autoplay;
   }

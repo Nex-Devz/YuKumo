@@ -204,4 +204,66 @@ describe("bug regressions", () => {
 
     expect(destroySpy).toHaveBeenCalledWith(DestroyReasons.Disconnected);
   });
+
+  describe("node failover vs session resuming", () => {
+    function resumingKumo() {
+      const kumo = new YuKumo({
+        nodes: [
+          { host: "a.example", port: 2333, password: "p", name: "main", resuming: true, resumeTimeout: 60 },
+          { host: "b.example", port: 2333, password: "p", name: "backup" },
+        ],
+      });
+      const main = kumo.getNode("main")!;
+      const backup = kumo.getNode("backup")!;
+      main.rest.sessionId = "sess-main";
+      main.rest.updatePlayer = vi.fn().mockResolvedValue({});
+      backup.rest.sessionId = "sess-backup";
+      backup.rest.updatePlayer = vi.fn().mockResolvedValue({});
+      // Only the backup remains selectable after the main node's disconnect
+      Object.defineProperty(main.ws, "state", { get: () => "disconnected", configurable: true });
+      Object.defineProperty(backup.ws, "state", { get: () => "connected", configurable: true });
+      return { kumo, main, backup };
+    }
+
+    it("defers failover for the resume window and cancels when the node reconnects", async () => {
+      vi.useFakeTimers();
+      try {
+        const { kumo, main } = resumingKumo();
+        const player = kumo.players.create({ guildId: "g-f1", node: main, voiceChannelId: "vc" });
+        player.setVoiceState({ sessionId: "s1", channelId: "vc", endpoint: "wss://ep", token: "tok" });
+        const setNodeSpy = vi.spyOn(player, "setNode");
+
+        // A transient blip must NOT migrate players while the session can resume
+        main.ws.eventDispatcher.emit("nodeDisconnected", "main", 1006, "network");
+        expect(setNodeSpy).not.toHaveBeenCalled();
+
+        // The node reconnects inside the resume window → failover is cancelled
+        main.ws.eventDispatcher.emit("nodeReady", "main");
+        await vi.advanceTimersByTimeAsync(61_000);
+        expect(setNodeSpy).not.toHaveBeenCalled();
+        expect(player.node).toBe(main);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("fails players over after the resume window elapses when the node stays down", async () => {
+      vi.useFakeTimers();
+      try {
+        const { kumo, main, backup } = resumingKumo();
+        const player = kumo.players.create({ guildId: "g-f2", node: main, voiceChannelId: "vc" });
+        player.setVoiceState({ sessionId: "s1", channelId: "vc", endpoint: "wss://ep", token: "tok" });
+        const setNodeSpy = vi.spyOn(player, "setNode");
+
+        main.ws.eventDispatcher.emit("nodeDisconnected", "main", 1006, "network");
+        expect(setNodeSpy).not.toHaveBeenCalled();
+
+        // Never reconnects — after the resume window the player must migrate
+        await vi.advanceTimersByTimeAsync(61_000);
+        expect(setNodeSpy).toHaveBeenCalledWith(backup);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
 });

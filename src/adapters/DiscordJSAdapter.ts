@@ -1,4 +1,5 @@
 import type { YuKumo } from "../Kumo.ts";
+import { isVoicePacket } from "./RawGatewayAdapter.ts";
 
 export interface MinimalDiscordJSClient {
   on(event: "raw", listener: (packet: { t: string; d: Record<string, unknown> }) => void): unknown;
@@ -24,12 +25,12 @@ export class DiscordJSAdapter {
   private readonly kumo: YuKumo;
 
   private readonly rawListener = (packet: { t: string; d: Record<string, unknown> }): void => {
-    if (!packet || !packet.t || !packet.d) return;
+    if (!isVoicePacket(packet)) return;
 
     if (packet.t === "VOICE_STATE_UPDATE") {
       const d = packet.d;
-      const botId = this.client.user?.id || this.kumo.userId;
-      if (botId && String(d.user_id) !== botId) return;
+      const botId = this.client.user?.id ?? this.kumo.userId;
+      if (botId != null && botId.length > 0 && String(d.user_id) !== botId) return;
 
       this.kumo.handleVoiceStateUpdate({
         guildId: String(d.guild_id ?? ""),

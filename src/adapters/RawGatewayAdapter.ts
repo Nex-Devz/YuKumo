@@ -7,6 +7,28 @@ export interface RawGatewayPacket {
 }
 
 /**
+ * A gateway payload as it may arrive from a third-party library before we've
+ * confirmed its shape — `t`/`d` are optional until {@link isVoicePacket} narrows it.
+ */
+export interface LooseGatewayPacket {
+  t?: unknown;
+  d?: unknown;
+}
+
+/**
+ * Narrows an unknown value to a gateway packet carrying a string `t` and an
+ * object `d`. Shared by every framework adapter so the voice-packet guard is
+ * identical (and type-safe) everywhere.
+ */
+export function isVoicePacket(
+  packet: unknown,
+): packet is { t: string; d: Record<string, unknown> } {
+  if (packet == null || typeof packet !== "object") return false;
+  const { t, d } = packet as LooseGatewayPacket;
+  return typeof t === "string" && t.length > 0 && d != null && typeof d === "object";
+}
+
+/**
  * Universal adapter for processing raw Discord Gateway WebSocket payloads directly.
  */
 export class RawGatewayAdapter {
@@ -21,7 +43,7 @@ export class RawGatewayAdapter {
    * Call this from your raw gateway listener.
    */
   public handleRawPacket(packet: RawGatewayPacket): void {
-    if (!packet || !packet.t || !packet.d) return;
+    if (!isVoicePacket(packet)) return;
 
     if (packet.t === "VOICE_STATE_UPDATE") {
       const d = packet.d;

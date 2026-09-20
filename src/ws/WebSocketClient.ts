@@ -6,6 +6,44 @@ import { EventDispatcher } from "./EventDispatcher.ts";
 
 export type WebSocketState = "disconnected" | "connecting" | "connected" | "destroyed";
 
+/**
+ * The minimal surface Yukumo needs from a WebSocket implementation. Both the
+ * `ws` package (Node) and the browser/global `WebSocket` satisfy this — the
+ * `on`-style methods come from `ws`, the `on*` handler properties from the DOM
+ * API, and we feature-detect which pair to wire in {@link WebSocketClient.connect}.
+ */
+interface SocketLike {
+  on?: (event: string, listener: (...args: unknown[]) => void) => void;
+  ping?: () => void;
+  close?: (code?: number, reason?: string) => void;
+  terminate?: () => void;
+  removeAllListeners?: () => void;
+  send?: (data: string) => void;
+  onopen?: ((...args: unknown[]) => void) | null;
+  onmessage?: ((...args: unknown[]) => void) | null;
+  onclose?: ((...args: unknown[]) => void) | null;
+  onerror?: ((...args: unknown[]) => void) | null;
+}
+
+/** Constructs a {@link SocketLike}; matches both `ws` and the global `WebSocket`. */
+type SocketConstructor = new (url: string, options?: { headers?: Record<string, string> }) => SocketLike;
+
+/** A close event as delivered by the DOM API (the `ws` package passes code/reason positionally). */
+interface CloseEventLike {
+  code?: number;
+  reason?: string;
+}
+
+/** A message event as delivered by the DOM API (the `ws` package passes the data directly). */
+interface MessageEventLike {
+  data?: unknown;
+}
+
+/** An error event/argument as delivered by either implementation. */
+interface ErrorEventLike {
+  message?: string;
+}
+
 export interface WebSocketClientOptions {
   nodeConfig: NodeConfig;
   userId: string;
@@ -25,6 +63,8 @@ export class WebSocketClient {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private heartbeatTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
   private _isAlive = true;
+  /** In-flight connect() attempt, shared with concurrent callers so they all await the same socket open/failure */
+  private connectPromise: Promise<void> | null = null;
 
   public constructor(options: WebSocketClientOptions) {
     this.options = options;
@@ -101,8 +141,15 @@ export class WebSocketClient {
       throw new Error("Cannot connect: WebSocket client is destroyed");
     }
 
-    if (this._state === "connecting" || this._state === "connected") {
+    if (this._state === "connected") {
       return;
+    }
+
+    // An attempt is already in flight — hand concurrent callers the same promise
+    // so they truly wait for the socket to open (and observe any failure)
+    // instead of resolving optimistically while the socket is still connecting.
+    if (this._state === "connecting" && this.connectPromise != null) {
+      return this.connectPromise;
     }
 
     this._state = "connecting";
@@ -132,26 +179,37 @@ export class WebSocketClient {
       headers["Session-Id"] = this._sessionId;
     }
 
-    const WSClass =
-      typeof globalThis.WebSocket !== "undefined" && (globalThis.WebSocket as any)._isMockFunction
-        ? globalThis.WebSocket
-        : WebSocket;
+    const globalWs = (globalThis as { WebSocket?: unknown }).WebSocket;
+    const WSClass = (
+      typeof globalWs !== "undefined" &&
+      (globalWs as { _isMockFunction?: boolean })._isMockFunction === true
+        ? globalWs
+        : WebSocket
+    ) as unknown as SocketConstructor;
 
-    const instance = new (WSClass as any)(url, { headers });
-    this.ws = instance;
+    const instance = new WSClass(url, { headers });
+    this.ws = instance as unknown as WebSocket;
 
-    return new Promise<void>((resolve, reject) => {
+    const attempt = new Promise<void>((resolve, reject) => {
       let settled = false;
       const timer = setTimeout(() => {
         if (!settled) {
           settled = true;
           reject(new Error(`Connection to ${host}:${port} timed out after ${connectTimeout}ms`));
+          if (this.ws === (instance as unknown as WebSocket)) {
+            // Abort the still-connecting socket so a late open/close can't
+            // clobber a successor connection, and drop the stale "connecting"
+            // state so a retry can actually connect.
+            this.teardownSocket("Connection timed out");
+            this._state = "disconnected";
+          }
         }
       }, connectTimeout);
       // Don't keep the process alive just for the connect timeout
       (timer as { unref?: () => void }).unref?.();
 
       const handleOpen = () => {
+        if (this.ws !== (instance as unknown as WebSocket)) return; // a successor connection owns the client now
         const wasReconnect = this.reconnectAttempts > 0;
         this._state = "connected";
         this.reconnectAttempts = 0;
@@ -168,19 +226,21 @@ export class WebSocketClient {
         }
       };
 
-      const handleMsg = (event: any) => {
+      const handleMsg = (event: string | Buffer | MessageEventLike) => {
+        if (this.ws !== (instance as unknown as WebSocket)) return;
         const data =
           typeof event === "string" || Buffer.isBuffer(event)
             ? event.toString()
-            : event?.data != null
+            : event.data != null
               ? String(event.data)
               : String(event);
         this.handleMessage(data);
       };
 
-      const handleClose = (event: any) => {
-        const code = typeof event === "number" ? event : (event?.code ?? 1000);
-        const reason = event?.reason != null ? String(event.reason) : "";
+      const handleClose = (event: number | CloseEventLike) => {
+        if (this.ws !== (instance as unknown as WebSocket)) return; // stale socket — ignore, a successor exists
+        const code = typeof event === "number" ? event : (event.code ?? 1000);
+        const reason = typeof event !== "number" && event.reason != null ? String(event.reason) : "";
         this._state = "disconnected";
         this.stopHeartbeat();
         this.events.emit("debug", `WebSocket closed: code=${code} reason=${reason}`);
@@ -197,9 +257,11 @@ export class WebSocketClient {
         }
       };
 
-      const handleError = (err: any) => {
+      const handleError = (err: unknown) => {
+        if (this.ws !== (instance as unknown as WebSocket)) return; // stale socket — ignore
+        const errObj = (err ?? {}) as ErrorEventLike;
         const error =
-          err instanceof Error ? err : new Error(String(err?.message ?? err ?? "WebSocket error"));
+          err instanceof Error ? err : new Error(String(errObj.message ?? err ?? "WebSocket error"));
         this.events.emit("debug", `WebSocket error on ${host}:${port}: ${error.message}`);
         this.events.emit("nodeError", this.nodeId, error);
         // The ws implementation emits "close" after "error"; rejection happens there
@@ -209,16 +271,29 @@ export class WebSocketClient {
       // dispatch every message twice and double-run reconnect bookkeeping
       if (typeof instance.on === "function") {
         instance.on("open", handleOpen);
-        instance.on("message", (data: any) => handleMsg(data));
-        instance.on("close", (code: number, reason: any) => handleClose({ code, reason }));
-        instance.on("error", (err: any) => handleError(err));
+        instance.on("message", (data: unknown) => handleMsg(data as string | Buffer));
+        instance.on("close", (code: unknown, reason: unknown) =>
+          handleClose({ code: code as number, reason: reason as string }),
+        );
+        instance.on("error", (err: unknown) => handleError(err));
       } else {
         instance.onopen = handleOpen;
-        instance.onmessage = handleMsg;
-        instance.onclose = handleClose;
+        instance.onmessage = ((event: MessageEventLike) => handleMsg(event)) as (
+          ...args: unknown[]
+        ) => void;
+        instance.onclose = ((event: CloseEventLike) => handleClose(event)) as (
+          ...args: unknown[]
+        ) => void;
         instance.onerror = handleError;
       }
     });
+
+    // Share the in-flight attempt so concurrent connect() callers await the same
+    // socket open/failure instead of resolving early; clear it once it settles.
+    this.connectPromise = attempt.finally(() => {
+      if (this.connectPromise === attempt) this.connectPromise = null;
+    });
+    return this.connectPromise;
   }
 
   private handleMessage(data: string): void {
@@ -416,7 +491,7 @@ export class WebSocketClient {
    * otherwise look "connected" forever and silently swallow every payload.
    * Only active when the socket implementation exposes ping() (the ws package).
    */
-  private startHeartbeat(instance: any): void {
+  private startHeartbeat(instance: SocketLike): void {
     const {
       enableHeartbeat = true,
       heartbeatIntervalMs = 30000,
@@ -439,7 +514,7 @@ export class WebSocketClient {
     this.heartbeatTimer = setInterval(() => {
       if (this._state !== "connected" || this.ws == null) return;
       try {
-        instance.ping();
+        instance.ping?.();
       } catch {
         return;
       }
@@ -457,7 +532,7 @@ export class WebSocketClient {
             terminate.call(instance);
           } else {
             try {
-              instance.close(4000, "Heartbeat timeout");
+              instance.close?.(4000, "Heartbeat timeout");
             } catch {
               // ignore
             }
@@ -513,6 +588,8 @@ export class WebSocketClient {
         // reconnection failure is handled by onclose
       });
     }, delay);
+    // A dead node must not keep the process alive across every backoff window
+    (this.reconnectTimer as { unref?: () => void }).unref?.();
   }
 
   public send(payload: Record<string, unknown>): void {
@@ -564,7 +641,10 @@ export class WebSocketClient {
 
     this.teardownSocket("Client shutdown");
     this._state = "disconnected";
-    this.events.removeAllListeners();
+    // NOTE: do NOT strip this.events listeners here. close() is a restartable
+    // shutdown (connect() is still allowed afterwards) and the dispatcher holds
+    // the manager's nodeReady/nodeDisconnected/... wiring — wiping it would turn
+    // a reconnected node into a zombie that the manager can never see again.
   }
 
   public destroy(): void {

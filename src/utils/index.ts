@@ -76,7 +76,7 @@ export function noop(): void {}
 /**
  * Parses a lavalink connection URL of the form
  * `lavalink://<name>:<password>@<host>:<port>` (also accepts http/https/ws/wss,
- * where the scheme sets `secure`). Mirrors lavalink-client's parseLavalinkConnUrl.
+ * where the scheme sets `secure`).
  */
 export function parseLavalinkConnUrl(connectionUrl: string): {
   name: string;

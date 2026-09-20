@@ -4,7 +4,7 @@
   "description": "High-performance, framework-agnostic Lavalink v4 client for JavaScript and TypeScript",
   "keywords": [
     "lavalink",
-    "lavalink-client",
+    "lavalink-wrapper",
     "lavalink-v4",
     "music",
     "discord",

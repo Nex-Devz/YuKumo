@@ -13,6 +13,12 @@ export interface SerializedQueue<T> {
   history: T[];
   currentIndex: number;
   repeatMode: RepeatMode;
+  /**
+   * The track that was removed from the queue while the node is still playing
+   * it. Not part of `tracks`; the cursor (currentIndex) is -1 while set. It is
+   * consumed by the next `next()`.
+   */
+  detachedCurrent?: T | null;
 }
 
 /**
@@ -24,6 +30,13 @@ export class Queue<T> {
   private readonly history: T[] = [];
   private currentIndex: number = -1;
   private _repeatMode: RepeatMode = "none";
+  /**
+   * Holds a track that was removed from `tracks` while still playing on the
+   * node. Keeping it as "current" (detached) prevents the cursor from shifting
+   * onto a not-yet-played track and silently skipping it when the removed
+   * track ends.
+   */
+  private _detachedCurrent: T | null = null;
   private readonly maxSize: number;
   private readonly maxHistorySize: number;
 
@@ -72,6 +85,7 @@ export class Queue<T> {
 
   /** Gets currently active track or null */
   public get currentTrack(): T | null {
+    if (this._detachedCurrent != null) return this._detachedCurrent;
     if (this.currentIndex < 0 || this.currentIndex >= this.tracks.length) {
       return null;
     }
@@ -83,7 +97,7 @@ export class Queue<T> {
     return this.tracks;
   }
 
-  /** Alias for currentTrack — matches Erela.js/Poru convention */
+  /** Alias for {@link currentTrack}. */
   public get current(): T | null {
     return this.currentTrack;
   }
@@ -170,7 +184,16 @@ export class Queue<T> {
    * to load, so a broken track can't retry-loop forever
    */
   public next(forceAdvance: boolean = false): T | null {
-    if (this.tracks.length === 0) return null;
+    if (this.tracks.length === 0 && this._detachedCurrent == null) return null;
+
+    // The (removed) current track finished playing — record it as played and
+    // advance through the remaining array. A removed track is never repeated,
+    // not even in repeat-track mode.
+    if (this._detachedCurrent != null) {
+      this.addToHistory(this._detachedCurrent);
+      this._detachedCurrent = null;
+      forceAdvance = true;
+    }
 
     if (this._repeatMode === "track" && !forceAdvance && this.currentTrack != null) {
       return this.currentTrack;
@@ -179,7 +202,12 @@ export class Queue<T> {
     this.addCurrentToHistory();
 
     if (this._repeatMode === "queue") {
-      this.currentIndex = (this.currentIndex + 1) % this.tracks.length;
+      if (this.tracks.length === 0) {
+        this.currentIndex = -1;
+        this.notifyChange();
+        return null;
+      }
+      this.currentIndex = this.currentIndex < 0 ? 0 : (this.currentIndex + 1) % this.tracks.length;
       this.notifyChange();
       return this.tracks[this.currentIndex] as T;
     }
@@ -197,6 +225,25 @@ export class Queue<T> {
    * at the current position so queue state and currentTrack stay consistent.
    */
   public previous(): T | null {
+    // The playing track was removed from the queue — there is no meaningful
+    // "previous" until that track ends (it isn't in the array to step back to).
+    if (this._detachedCurrent != null) return null;
+
+    // In "queue" repeat mode tracks are never consumed, so history only holds
+    // copies of live entries — re-inserting one would duplicate a track that is
+    // already in the array and grow the queue with every call. Step the cursor
+    // back through the cycle instead.
+    if (this._repeatMode === "queue") {
+      if (this.tracks.length === 0) return null;
+      if (this.currentIndex < 0) {
+        this.currentIndex = this.tracks.length - 1;
+      } else {
+        this.currentIndex = (this.currentIndex - 1 + this.tracks.length) % this.tracks.length;
+      }
+      this.notifyChange();
+      return this.tracks[this.currentIndex] as T;
+    }
+
     const historyTrack = this.history.pop() ?? null;
     if (historyTrack != null) {
       const insertAt = this.currentIndex >= 0 ? this.currentIndex : 0;
@@ -218,6 +265,7 @@ export class Queue<T> {
   /** Starts playback from first track in queue */
   public start(): T | null {
     if (this.tracks.length === 0) return null;
+    this._detachedCurrent = null;
     this.currentIndex = 0;
     this.notifyChange();
     return this.tracks[0] as T;
@@ -227,6 +275,7 @@ export class Queue<T> {
   public clear(): void {
     this.tracks.length = 0;
     this.currentIndex = -1;
+    this._detachedCurrent = null;
     this.notifyChange();
   }
 
@@ -255,16 +304,17 @@ export class Queue<T> {
     if (startIndex < 0 || startIndex >= this.tracks.length) return [];
     const removed = this.tracks.splice(startIndex, deleteCount);
 
-    if (this.currentIndex >= startIndex + deleteCount) {
+    const removedCurrent = this.currentIndex >= startIndex && this.currentIndex < startIndex + removed.length;
+
+    if (removedCurrent) {
+      // The node is still playing this track. Keep it as the current track,
+      // detached from the array, until it ends naturally — otherwise the
+      // cursor silently shifts onto a not-yet-played track and the next
+      // advance skips it.
+      this._detachedCurrent = removed[this.currentIndex - startIndex] ?? null;
+      this.currentIndex = -1;
+    } else if (this.currentIndex >= startIndex + deleteCount) {
       this.currentIndex -= removed.length;
-    } else if (this.currentIndex >= startIndex) {
-      if (this.tracks.length === 0) {
-        this.currentIndex = -1;
-      } else if (startIndex < this.tracks.length) {
-        this.currentIndex = startIndex;
-      } else {
-        this.currentIndex = this.tracks.length - 1;
-      }
     }
 
     this.notifyChange();
@@ -348,6 +398,7 @@ export class Queue<T> {
     }
 
     this.currentIndex = 0;
+    this._detachedCurrent = null;
     this.notifyChange();
     return this.tracks[0] as T;
   }
@@ -374,7 +425,7 @@ export class Queue<T> {
 
   /** Clears all tracks from queue except the currently playing track */
   public clearExceptCurrent(): void {
-    const current = this.currentTrack;
+    const current = this._detachedCurrent != null ? null : this.currentTrack;
     this.tracks.length = 0;
     if (current != null) {
       this.tracks.push(current);
@@ -389,6 +440,7 @@ export class Queue<T> {
   public setTracks(tracks: T[]): void {
     this.tracks.length = 0;
     this.tracks.push(...tracks);
+    this._detachedCurrent = null;
     this.currentIndex = this.tracks.length > 0 ? 0 : -1;
     this.notifyChange();
   }
@@ -522,6 +574,7 @@ export class Queue<T> {
       history: [...this.history],
       currentIndex: this.currentIndex,
       repeatMode: this._repeatMode,
+      ...(this._detachedCurrent != null ? { detachedCurrent: this._detachedCurrent } : {}),
     };
   }
 
@@ -532,16 +585,21 @@ export class Queue<T> {
     this.history.length = 0;
     this.history.push(...state.history);
     this.currentIndex = state.currentIndex;
+    this._detachedCurrent = state.detachedCurrent ?? null;
     this._repeatMode = state.repeatMode;
     this.notifyChange();
   }
 
+  private addToHistory(entry: T): void {
+    this.history.push(entry);
+    if (this.history.length > this.maxHistorySize) {
+      this.history.shift();
+    }
+  }
+
   private addCurrentToHistory(): void {
     if (this.currentIndex >= 0 && this.currentIndex < this.tracks.length) {
-      this.history.push(this.tracks[this.currentIndex] as T);
-      if (this.history.length > this.maxHistorySize) {
-        this.history.shift();
-      }
+      this.addToHistory(this.tracks[this.currentIndex] as T);
     }
   }
 

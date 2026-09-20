@@ -269,4 +269,58 @@ describe("RestClient (NodeLink)", () => {
       expect(body.fading.trackStart.type).toBe("volume");
     });
   });
+
+  describe("youtube-source plugin", () => {
+    it("GETs status from the server root (not under /v4)", async () => {
+      const client = createClient();
+      mockFetch.mockResolvedValue(mockResponse(200, { oauthEnabled: true }));
+
+      const status = await client.getYouTubeStatus();
+
+      expect(status).toEqual({ oauthEnabled: true });
+      expect(urlOf(mockFetch.mock.calls[0])).toBe("http://localhost:2333/youtube");
+      expect((mockFetch.mock.calls[0] as any[])[1].method).toBe("GET");
+    });
+
+    it("POSTs poToken + visitorData", async () => {
+      const client = createClient();
+      mockFetch.mockResolvedValue(mockResponse(204, undefined));
+
+      await client.setYouTubePoToken("po-abc", "visitor-xyz");
+
+      const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe("http://localhost:2333/youtube");
+      expect(init.method).toBe("POST");
+      expect(JSON.parse(init.body as string)).toEqual({
+        poToken: "po-abc",
+        visitorData: "visitor-xyz",
+      });
+    });
+
+    it("POSTs an OAuth refresh token (skipInitialization defaults true)", async () => {
+      const client = createClient();
+      mockFetch.mockResolvedValue(mockResponse(204, undefined));
+
+      await client.setYouTubeRefreshToken("refresh-123");
+
+      const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+      expect(JSON.parse(init.body as string)).toEqual({
+        refreshToken: "refresh-123",
+        skipInitialization: true,
+      });
+    });
+
+    it("starts the device-code flow when no refresh token is given", async () => {
+      const client = createClient();
+      mockFetch.mockResolvedValue(mockResponse(204, undefined));
+
+      await client.setYouTubeRefreshToken();
+
+      const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+      expect(JSON.parse(init.body as string)).toEqual({
+        refreshToken: null,
+        skipInitialization: true,
+      });
+    });
+  });
 });

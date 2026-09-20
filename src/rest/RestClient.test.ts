@@ -1,9 +1,30 @@
 import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
 import { RestClient } from "./RestClient.ts";
 import { RestError } from "../errors/index.ts";
+import type { TrackData } from "../types/protocol.ts";
 
 const mockFetch = vi.fn();
 const originalFetch = globalThis.fetch;
+
+function makeEncodedTrack(encoded: string): TrackData {
+  return {
+    encoded,
+    info: {
+      identifier: encoded,
+      isSeekable: true,
+      author: "a",
+      length: 1000,
+      isStream: false,
+      position: 0,
+      title: encoded,
+      uri: null,
+      artworkUrl: null,
+      isrc: null,
+      sourceName: "youtube",
+    },
+    pluginInfo: {},
+  };
+}
 
 function createClient(sessionId?: string) {
   return new RestClient({
@@ -180,6 +201,44 @@ describe("RestClient", () => {
         expect.stringContaining("identifier=ytsearch%3Atest"),
         expect.any(Object),
       );
+    });
+  });
+
+  describe("resolveTrack", () => {
+    it("returns the server-selected playlist track instead of tracks[0]", async () => {
+      const client = createClient();
+      const trackA = makeEncodedTrack("A");
+      const trackD = makeEncodedTrack("D");
+      mockFetch.mockResolvedValue(
+        mockResponse(200, {
+          loadType: "playlist",
+          data: {
+            info: { name: "Up Next", selectedTrack: 3 },
+            pluginInfo: {},
+            tracks: [trackA, makeEncodedTrack("B"), makeEncodedTrack("C"), trackD],
+          },
+        }),
+      );
+
+      const result = await client.resolveTrack("https://example.com/upnext");
+      expect(result.encoded).toBe("D");
+    });
+
+    it("clamps an out-of-range selectedTrack to the last track", async () => {
+      const client = createClient();
+      mockFetch.mockResolvedValue(
+        mockResponse(200, {
+          loadType: "playlist",
+          data: {
+            info: { name: "P", selectedTrack: 99 },
+            pluginInfo: {},
+            tracks: [makeEncodedTrack("A")],
+          },
+        }),
+      );
+
+      const result = await client.resolveTrack("https://example.com/p");
+      expect(result.encoded).toBe("A");
     });
   });
 

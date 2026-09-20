@@ -77,7 +77,7 @@ export class Node {
     });
 
     this.ws.eventDispatcher.on("nodeReady", () => {
-      if (this.ws.sessionId) {
+      if (this.ws.sessionId != null && this.ws.sessionId.length > 0) {
         this.rest.sessionId = this.ws.sessionId;
         void this.onSessionReady(config);
       }

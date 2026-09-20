@@ -5,6 +5,10 @@ All notable changes to the `yukumo` Lavalink client library will be documented i
 ## [Unreleased]
 
 ### Added
+- **Server-side plugin filters (LavaDSPX & any filter plugin)**: `player.setPluginFilter(name, settings)` and `FilterChain.setPluginFilter()` / `getPluginFilter()` / `hasPluginFilter()` pass arbitrary filter-plugin settings through Lavalink v4's `pluginFilters` (e.g. LavaDSPX `highPass`, `lowPass`, `normalization`, `echo`). Settings are serialized untouched and round-trip through `apply()` / `toPayload()`; pass `false`/`null` to remove.
+- **youtube-source plugin config**: `RestClient.getYouTubeStatus()`, `setYouTubePoToken(poToken, visitorData)`, and `setYouTubeRefreshToken(refreshToken?, skipInitialization?)` drive the youtube-source plugin's poToken/OAuth at the server root to bypass YouTube bot-detection.
+- **`Player.skipTo(index)`**: player-level jump that starts the target queue track on the node, so the queue cursor never points at a not-yet-played track while old audio is still running (skipped tracks go to history).
+- **Typed server-plugin markers**: `createLavaSrcPlugin()` / `createSponsorBlockPlugin()` / `createFloweryTTSPlugin()` return `ServerPluginMarker` objects that record their intended options and expose `isServerPlugin`, so `manager.plugins.get(name)` can introspect them (previously silent no-ops).
 - **Full NodeLink Protocol Support**: the client now speaks NodeLink's full protocol, not just the Lavalink subset.
   - **NodeLink routing**: `getVersion()` hits NodeLink's root `/version`; session resuming is enabled for NodeLink nodes (supported since NodeLink v3) instead of being skipped.
   - **SponsorBlock**: `player.setSponsorBlock(state)` / `getSponsorBlock()` / `deleteSponsorBlock()` now route to NodeLink's `/sessions/:id/players/:guildId/sponsorblock` endpoint, plus new `getSponsorBlockState()`, `setSponsorBlockOptions()` (PATCH — `enabled`, `categories`, `actionTypes`, `skipMarginMs`) and `setSponsorBlockSegments()` (POST) methods.
@@ -26,16 +30,21 @@ All notable changes to the `yukumo` Lavalink client library will be documented i
 - **Voice handling**: Discord close code `4014` is recognized as an auto-reconnect; stale voice credentials are cleared (`Player.resetVoiceState()`) before the bot rejoins after a disconnect.
 - **Voice-state filter**: `VOICE_STATE_UPDATE` events from non-bot users can no longer destroy a player when the bot's user id is empty.
 - **Search results**: NodeLink playlist responses keep the server's `selectedTrack` index (`playlistInfo.selectedTrack`).
+- **Concurrent `connect()`**: a second `WebSocketClient.connect()` while one is in flight now returns the same pending promise, so all callers await the real socket open (or failure) instead of resolving optimistically.
+- **Typed event forwarding**: the manager's node-event and plugin-event re-emit paths are fully typed against the public `EventMap`; the internal `as any` / `as never` / `as EventName` casts were removed.
+
+### Changed
+- **Zero-warning lint**: the WebSocket client, framework adapters, REST client, and lyrics client no longer use `any`; a shared `isVoicePacket()` type guard replaces per-adapter packet checks, and `npm run lint` is clean with zero warnings.
 
 ## [1.8.0] - 2026-08-19
 
 ### Added
 - **Offline Track Encoding**: `Track.encode(info)`, `Track.decode(encoded)`, and `Track.build(info, requester?)` are byte-for-byte compatible with Lavalink v4's native encoding (`@lavalink/encoding`) — build, encode, and decode tracks entirely on the client with no server round-trip. Also exported: `encodeTrackInfo()` / `decodeTrackInfo()`.
 - **Requester Support**: `kumo.search({ query, requester })` (and the `requester` field on `SearchOptions`) stamps the requester onto every returned track's `userData` — cache hits included, without polluting the shared cache. `Track.requester` now auto-populates from `userData.requester`.
-- **Player State Getters** (Poru/Riffy convention): `isPlaying`, `isPaused`, `isConnected`, `isDestroyed`, `isAutoplay`.
-- **Repeat-Mode Aliases** (Magmastream/erela.js convention): `setTrackRepeat(enabled)` / `setQueueRepeat(enabled)` plus `trackRepeat` / `queueRepeat` boolean getters/setters that never clobber the other repeat mode.
-- **Per-Filter Setters** (Shoukaku/lavalink-client style): `player.setEqualizer()`, `setKaraoke()`, `setTimescale()`, `setTremolo()`, `setVibrato()`, `setRotation()`, `setDistortion()`, `setChannelMix()`, `setLowPass()`, `setVolumeFilter()`. `player.setFilters()` now also accepts a raw Lavalink `FiltersObject` in addition to a `FilterChain`.
-- **Queue Slicing**: `player.get(start, end)` returns a queue slice (current track included) — Poru-compatible.
+- **Player State Getters**: `isPlaying`, `isPaused`, `isConnected`, `isDestroyed`, `isAutoplay`.
+- **Repeat-Mode Aliases**: `setTrackRepeat(enabled)` / `setQueueRepeat(enabled)` plus `trackRepeat` / `queueRepeat` boolean getters/setters that never clobber the other repeat mode.
+- **Per-Filter Setters**: `player.setEqualizer()`, `setKaraoke()`, `setTimescale()`, `setTremolo()`, `setVibrato()`, `setRotation()`, `setDistortion()`, `setChannelMix()`, `setLowPass()`, `setVolumeFilter()`. `player.setFilters()` now also accepts a raw Lavalink `FiltersObject` in addition to a `FilterChain`.
+- **Queue Slicing**: `player.get(start, end)` returns a queue slice (current track included).
 - **Duration Utils**: `parseDuration("3:32")` → ms. `formatDuration()` consolidated into `UIHelpers` and reused by `Track.durationFormatted`.
 
 ## [1.7.0] - 2026-08-06

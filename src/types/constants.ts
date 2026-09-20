@@ -1,6 +1,6 @@
 /**
- * Integer state codes for Node connection state — migration compat for consumers
- * coming from wrappers that use numeric enums (Erela.js, Poru, Magmastream).
+ * Integer state codes for Node connection state — provided for consumers
+ * migrating from wrappers that represent node state as a numeric enum.
  */
 export const NodeStateCode = {
   DISCONNECTED: 0,
@@ -24,7 +24,7 @@ export type LoopModeValue = (typeof LoopMode)[keyof typeof LoopMode];
 
 /**
  * Maps Lavalink v4 lowercase loadType values to the uppercase format
- * used by legacy wrappers (Erela.js, Poru, Magmastream).
+ * used by older Lavalink wrappers, for consumers migrating from them.
  */
 export const LoadTypeMap: Record<string, string> = {
   track: "TRACK_LOADED",
@@ -36,7 +36,7 @@ export const LoadTypeMap: Record<string, string> = {
 
 /**
  * Standardized reasons passed to Player.destroy() and emitted with the
- * "playerDestroy" event — mirrors lavalink-client's DestroyReasons.
+ * "playerDestroy" event.
  */
 export const DestroyReasons = {
   QueueEmpty: "QueueEmpty",

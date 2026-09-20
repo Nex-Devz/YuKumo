@@ -1,4 +1,3 @@
-/* eslint-disable no-console */
 /**
  * Quick benchmark measuring YuKumo startup time and queue performance.
  *

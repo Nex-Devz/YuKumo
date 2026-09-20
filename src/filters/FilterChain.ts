@@ -27,7 +27,7 @@ export type BassBoostLevel = "low" | "medium" | "high" | "extreme";
 
 export type AudioOutput = "mono" | "stereo" | "left" | "right";
 
-/** ChannelMix presets for routing audio output — mirrors lavalink-client's audioOutputsData */
+/** ChannelMix presets for routing audio output (mono, stereo, left/right-only, swap). */
 export const AudioOutputs: Record<
   AudioOutput,
   { leftToLeft: number; leftToRight: number; rightToLeft: number; rightToRight: number }
@@ -43,6 +43,12 @@ export const AudioOutputs: Record<
  */
 export class FilterChain {
   private readonly filters: Map<string, Filter> = new Map();
+  /**
+   * Raw filter settings for server-side filter plugins (LavaDSPX, etc.) keyed
+   * by the plugin's filter name, serialized under Lavalink v4's `pluginFilters`.
+   * These pass through untouched — Yukumo doesn't model each plugin's schema.
+   */
+  private readonly pluginFilters: Map<string, Record<string, unknown>> = new Map();
 
   /** Adds a filter instance to the active chain */
   public add(filter: Filter): this {
@@ -65,14 +71,48 @@ export class FilterChain {
     return this.filters.has(name);
   }
 
-  /** Clears all applied filters from the chain */
+  /** Clears all applied filters from the chain, including plugin filters */
   public clear(): void {
     this.filters.clear();
+    this.pluginFilters.clear();
   }
 
   /** Gets all active filter instances */
   public getAll(): Filter[] {
     return Array.from(this.filters.values());
+  }
+
+  /**
+   * Sets a raw server-side plugin filter (e.g. LavaDSPX's `highPass`,
+   * `lowPass`, `normalization`, `echo`) serialized under Lavalink v4's
+   * `pluginFilters`. Yukumo passes `settings` through verbatim, so any filter
+   * plugin installed on the node works without a dedicated Yukumo class.
+   * Pass `false` (or `null`) as `settings` to remove the plugin filter.
+   *
+   * @example
+   * chain.setPluginFilter("lowPass", { smoothing: 20 });
+   * chain.setPluginFilter("normalization", { maxAmplitude: 0.75, adaptive: true });
+   */
+  public setPluginFilter(
+    name: string,
+    settings: Record<string, unknown> | false | null,
+  ): this {
+    if (settings == null || settings === false) {
+      this.pluginFilters.delete(name);
+    } else {
+      this.pluginFilters.set(name, settings);
+    }
+    return this;
+  }
+
+  /** Reads back a raw plugin filter's settings, or `undefined` if unset */
+  public getPluginFilter(name: string): Record<string, unknown> | undefined {
+    return this.pluginFilters.get(name);
+  }
+
+  /** Whether a raw plugin filter with this name is set */
+  public hasPluginFilter(name: string): boolean {
+    return this.pluginFilters.has(name);
   }
 
   /** Converts active filters to Lavalink v4 REST payload structure */
@@ -84,12 +124,26 @@ export class FilterChain {
       Object.assign(payload, serialized);
     }
 
+    if (this.pluginFilters.size > 0) {
+      const pluginFilters: Record<string, Record<string, unknown>> = {};
+      for (const [name, settings] of this.pluginFilters) {
+        pluginFilters[name] = settings;
+      }
+      payload.pluginFilters = pluginFilters;
+    }
+
     return payload;
   }
 
   /** Applies a Lavalink filters object payload to populate internal filter states */
   public apply(payload: FiltersObject): void {
     this.clear();
+
+    if (payload.pluginFilters != null) {
+      for (const [name, settings] of Object.entries(payload.pluginFilters)) {
+        this.pluginFilters.set(name, settings);
+      }
+    }
 
     if (payload.volume !== undefined) {
       this.add(new VolumeFilter(payload.volume));

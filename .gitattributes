@@ -1,0 +1,36 @@
+# Normalize line endings to LF on checkin, auto on checkout
+* text=auto eol=lf
+
+# Explicitly declare text files
+*.ts   text
+*.js   text
+*.cjs  text
+*.mjs  text
+*.json text
+*.md   text
+*.yml  text
+*.yaml text
+
+# Windows-specific scripts keep CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Shell scripts stay LF even on Windows checkout
+*.sh text eol=lf
+
+# Binary files
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.woff binary
+*.woff2 binary
+
+# Keep lockfiles out of language stats and diffs
+package-lock.json linguist-generated=true -diff
+bun.lock          linguist-generated=true -diff
+
+# Exclude non-source from GitHub language stats
+examples/**  linguist-documentation
+docs/**      linguist-documentation

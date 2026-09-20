@@ -21,6 +21,8 @@ import type {
   VoiceGatewayPayload,
   EventName,
   EventCallback,
+  EventMap,
+  NodeStats,
 } from "./types/internal.ts";
 import type { TrackData, LoadResult, LavaSearchType, LavaSearchResult } from "./types/protocol.ts";
 import { LoadTypeMap, DestroyReasons } from "./types/constants.ts";
@@ -64,9 +66,9 @@ function loadResultToSearchResult(result: LoadResult): SearchResult {
 }
 
 /**
- * Stamps the search requester onto each track's userData (Lavalink v4
- * convention used by lavalink-client/Poru). Returns a new result so the
- * shared search cache is never polluted with a stale requester.
+ * Stamps the search requester onto each track's userData (the Lavalink v4
+ * `userData` convention). Returns a new result so the shared search cache is
+ * never polluted with a stale requester.
  */
 function attachRequester(result: SearchResult, requester: unknown): SearchResult {
   if (requester === undefined || result.tracks.length === 0) return result;
@@ -123,7 +125,8 @@ function formatSourcePrefix(source: string): string {
     soundcloudSearch: "scsearch",
     spotifySearch: "spsearch",
   };
-  if (map[lower]) return map[lower];
+  const mapped = map[lower];
+  if (mapped != null) return mapped;
   if (lower.endsWith("search")) return lower;
   return `${source}search`;
 }
@@ -181,6 +184,12 @@ export class YuKumo {
   private readonly queueOptions: NonNullable<ManagerOptions["queueOptions"]>;
   /** Session + player resuming across restarts (see ManagerOptions.resuming) */
   private readonly resuming: { enabled: boolean; timeout: number; persistPlayers: boolean };
+  /**
+   * Deferred player migrations for nodes whose session-resume window is still
+   * open after a disconnect (nodeId -> timer). Cleared when the node reconnects
+   * or when the window elapses.
+   */
+  private readonly pendingFailovers = new Map<string, ReturnType<typeof setTimeout>>();
 
   public constructor(options: ManagerOptions) {
     this._userId = options.userId ?? "";
@@ -402,7 +411,7 @@ export class YuKumo {
   private bindPlayerEvents(player: Player): void {
     player.events.on("queueEnd", (guildId: string) => {
       this.events.emit("queueEnd", guildId);
-      this.events.emit("playerEmpty" as EventName, guildId);
+      this.events.emit("playerEmpty", guildId);
     });
   }
 
@@ -449,6 +458,10 @@ export class YuKumo {
     }
     this.searchCache.clear();
     this.pendingPlayerCreates.clear();
+    for (const timer of this.pendingFailovers.values()) {
+      clearTimeout(timer);
+    }
+    this.pendingFailovers.clear();
     if (typeof this.storage.disconnect === "function") {
       try {
         await this.storage.disconnect();
@@ -585,7 +598,7 @@ export class YuKumo {
    * @param encodedTrack The encoded track base64 string
    * @param nodeName Optional specific node name to use
    */
-  public async getLyrics(encodedTrack: string, nodeName?: string): Promise<any> {
+  public async getLyrics(encodedTrack: string, nodeName?: string): Promise<unknown> {
     const node = nodeName != null ? this.nodes.get(nodeName) : this.nodes.pick(encodedTrack);
     if (node == null) return null;
     try {
@@ -661,7 +674,11 @@ export class YuKumo {
     const existingVoice = this.voice.getVoiceState(options.guildId);
     if (existingVoice != null) {
       player.setVoiceState(existingVoice);
-      if (existingVoice.token && existingVoice.endpoint && existingVoice.sessionId) {
+      if (
+        existingVoice.token != null &&
+        existingVoice.endpoint != null &&
+        existingVoice.sessionId != null
+      ) {
         await player.sendVoiceUpdate().catch(() => undefined);
       }
     }
@@ -779,7 +796,7 @@ export class YuKumo {
     if (player.voiceChannelId !== data.channelId) {
       const oldChannel = player.voiceChannelId;
       await player.setVoiceChannel(data.channelId);
-      this.events.emit("playerMoved" as any, data.guildId, oldChannel, data.channelId);
+      this.events.emit("playerMoved", data.guildId, oldChannel, data.channelId);
     }
 
     player.updateVoiceState({ sessionId: data.sessionId, channelId: data.channelId });
@@ -796,7 +813,7 @@ export class YuKumo {
    * configured onDisconnect policy (autoReconnect wins over destroyPlayer).
    */
   private async handleVoiceDisconnect(guildId: string, player: Player): Promise<void> {
-    this.events.emit("playerDisconnect" as EventName, guildId, "voiceChannelLeft");
+    this.events.emit("playerDisconnect", guildId, "voiceChannelLeft");
     if (this.onDisconnect.autoReconnect && this.sendGatewayPayload != null) {
       const position = player.position;
       const paused = player.paused;
@@ -970,6 +987,7 @@ export class YuKumo {
   private bindNodeEvents(node: Node): void {
     const ws = node.ws.eventDispatcher;
     ws.on("nodeReady", (nodeId: string) => {
+      this.cancelPendingFailover(nodeId);
       this.events.emit("nodeReady", nodeId);
       // Persist the session ID so a restarted process can reclaim the session
       if (this.resuming.enabled && node.ws.sessionId != null) {
@@ -989,7 +1007,9 @@ export class YuKumo {
     });
     ws.on("nodeReconnected", (nodeId: string) => this.events.emit("nodeReconnected", nodeId));
     ws.on("nodeError", (nodeId: string, error: Error) => this.events.emit("nodeError", nodeId, error));
-    ws.on("stats", (nodeId: string, stats: unknown) => this.events.emit("stats", nodeId, stats as never));
+    ws.on("stats", (nodeId: string, stats: unknown) =>
+      this.events.emit("stats", nodeId, stats as NodeStats),
+    );
     ws.on("debug", (msg: string) => this.events.emit("debug", msg));
     ws.on("socketClosed", (guildId: string, code: number, reason: string, byRemote: boolean) => {
       this.events.emit("socketClosed", guildId, code, reason, byRemote);
@@ -1031,9 +1051,12 @@ export class YuKumo {
       "workerFailed",
       "playerConnected",
       "playerReconnecting",
-    ] as const) {
-      ws.on(name as EventName, ((...args: unknown[]) =>
-        (this.events.emit as (...a: unknown[]) => void)(name, ...args)) as never);
+    ] satisfies readonly EventName[]) {
+      // Every forwarded event shares the same "pass args straight through"
+      // shape; re-emitting on our own dispatcher keeps the public EventMap types.
+      ws.on(name, (...args: unknown[]) => {
+        this.events.emit(name, ...(args as Parameters<EventMap[typeof name]>));
+      });
     }
   }
 
@@ -1054,7 +1077,8 @@ export class YuKumo {
     }
   }
 
-  private resyncPlayersOnNode(nodeId: string): void {    const affected = this.players.getAll().filter((p) => p.node.id === nodeId);
+  private resyncPlayersOnNode(nodeId: string): void {
+    const affected = this.players.getAll().filter((p) => p.node.id === nodeId);
     for (const player of affected) {
       player.resync().catch((err: unknown) => {
         this.events.emit(
@@ -1066,6 +1090,43 @@ export class YuKumo {
   }
 
   private handleNodeFailover(failedNodeId: string): void {
+    const failedNode = this.nodes.get(failedNodeId);
+    const resumeWindowMs =
+      failedNode?.config.resuming === true
+        ? (failedNode.config.resumeTimeout ?? this.resuming.timeout) * 1000
+        : 0;
+
+    if (resumeWindowMs > 0) {
+      // Session resuming is enabled for this node. Give it its resume window
+      // to reconnect: migrating now would defeat gap-free audio (the resumed
+      // session keeps playing) and orphan a session that hasn't expired yet.
+      // If the node never comes back, fail over once the window elapses.
+      if (this.pendingFailovers.has(failedNodeId)) return; // already deferred
+      this.events.emit(
+        "debug",
+        `Deferring failover for node ${failedNodeId} for ${resumeWindowMs}ms (session resuming enabled)`,
+      );
+      const timer = setTimeout(() => {
+        this.pendingFailovers.delete(failedNodeId);
+        this.migratePlayersFrom(failedNodeId);
+      }, resumeWindowMs);
+      (timer as { unref?: () => void }).unref?.();
+      this.pendingFailovers.set(failedNodeId, timer);
+      return;
+    }
+
+    this.migratePlayersFrom(failedNodeId);
+  }
+
+  private cancelPendingFailover(nodeId: string): void {
+    const timer = this.pendingFailovers.get(nodeId);
+    if (timer != null) {
+      clearTimeout(timer);
+      this.pendingFailovers.delete(nodeId);
+    }
+  }
+
+  private migratePlayersFrom(failedNodeId: string): void {
     const affectedPlayers = this.players.getAll().filter((p) => p.node.id === failedNodeId);
     for (const player of affectedPlayers) {
       const replacementNode = this.nodes.pick(player.guildId);

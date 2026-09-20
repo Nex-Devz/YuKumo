@@ -27,4 +27,47 @@ describe("FilterChain Presets & Custom Registry", () => {
     expect(chain.has("equalizer")).toBe(true);
     expect(chain.toPayload().equalizer).toEqual([{ band: 0, gain: 0.5 }]);
   });
+
+  describe("plugin filters (LavaDSPX / arbitrary server-side filter plugins)", () => {
+    it("serializes plugin filters under pluginFilters", () => {
+      const chain = new FilterChain();
+      chain.setPluginFilter("normalization", { maxAmplitude: 0.75, adaptive: true });
+      chain.setPluginFilter("echo", { echoLength: 0.5, decay: 0.3 });
+
+      expect(chain.toPayload().pluginFilters).toEqual({
+        normalization: { maxAmplitude: 0.75, adaptive: true },
+        echo: { echoLength: 0.5, decay: 0.3 },
+      });
+      expect(chain.hasPluginFilter("normalization")).toBe(true);
+      expect(chain.getPluginFilter("echo")).toEqual({ echoLength: 0.5, decay: 0.3 });
+    });
+
+    it("omits pluginFilters entirely when none are set", () => {
+      const chain = new FilterChain();
+      chain.setNightcore(true);
+      expect(chain.toPayload().pluginFilters).toBeUndefined();
+    });
+
+    it("removes a plugin filter when passed false", () => {
+      const chain = new FilterChain();
+      chain.setPluginFilter("lowPass", { smoothing: 20 });
+      chain.setPluginFilter("lowPass", false);
+      expect(chain.hasPluginFilter("lowPass")).toBe(false);
+      expect(chain.toPayload().pluginFilters).toBeUndefined();
+    });
+
+    it("round-trips plugin filters through apply()", () => {
+      const chain = new FilterChain();
+      chain.apply({ pluginFilters: { highPass: { cutoffFrequency: 1500 } } });
+      expect(chain.getPluginFilter("highPass")).toEqual({ cutoffFrequency: 1500 });
+      expect(chain.toPayload().pluginFilters).toEqual({ highPass: { cutoffFrequency: 1500 } });
+    });
+
+    it("clear() drops plugin filters too", () => {
+      const chain = new FilterChain();
+      chain.setPluginFilter("normalization", { maxAmplitude: 1 });
+      chain.clear();
+      expect(chain.hasPluginFilter("normalization")).toBe(false);
+    });
+  });
 });

@@ -35,6 +35,19 @@ export function parseLrc(lrcContent: string): SyncedLyricLine[] {
   return result.sort((a, b) => a.timestampMs - b.timestampMs);
 }
 
+/** The subset of an LRCLIB track record Yukumo reads. */
+interface LrcLibTrack {
+  trackName?: string;
+  artistName?: string;
+  albumName?: string;
+  duration?: number;
+  plainLyrics?: string | null;
+  syncedLyrics?: string | null;
+}
+
+/** User-Agent sent to LRCLIB — identifies Yukumo without exposing any upstream project. */
+const LYRICS_USER_AGENT = "Yukumo (https://github.com/Nex-Devz/YuKumo)";
+
 export class LyricsClient {
   private readonly baseUrl: string;
 
@@ -57,11 +70,12 @@ export class LyricsClient {
       const url = new URL(`${this.baseUrl}/get`);
       url.searchParams.set("track_name", trackName);
       url.searchParams.set("artist_name", artistName);
-      if (albumName) url.searchParams.set("album_name", albumName);
-      if (durationSeconds) url.searchParams.set("duration", Math.round(durationSeconds).toString());
+      if (albumName != null && albumName.length > 0) url.searchParams.set("album_name", albumName);
+      if (durationSeconds != null && durationSeconds > 0)
+        url.searchParams.set("duration", Math.round(durationSeconds).toString());
 
       const res = await fetch(url.toString(), {
-        headers: { "User-Agent": "YuKumo-Lavalink-Client/1.3.2" },
+        headers: { "User-Agent": LYRICS_USER_AGENT },
       });
 
       if (!res.ok) {
@@ -69,7 +83,7 @@ export class LyricsClient {
         return await this.searchLyrics(trackName, artistName);
       }
 
-      const data = (await res.json()) as any;
+      const data = (await res.json()) as LrcLibTrack;
       const syncedLyrics = parseLrc(data.syncedLyrics ?? "");
 
       return {
@@ -92,14 +106,14 @@ export class LyricsClient {
       url.searchParams.set("q", `${artistName} ${trackName}`);
 
       const res = await fetch(url.toString(), {
-        headers: { "User-Agent": "YuKumo-Lavalink-Client/1.3.2" },
+        headers: { "User-Agent": LYRICS_USER_AGENT },
       });
 
       if (!res.ok) return null;
-      const results = (await res.json()) as any[];
+      const results = (await res.json()) as LrcLibTrack[];
       if (!Array.isArray(results) || results.length === 0) return null;
 
-      const best = results[0];
+      const best = results[0]!;
       return {
         title: best.trackName ?? trackName,
         artist: best.artistName ?? artistName,

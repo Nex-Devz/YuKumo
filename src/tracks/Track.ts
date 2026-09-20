@@ -82,7 +82,12 @@ export class Track {
       encoded: this.encoded,
       info: { ...this.info },
       pluginInfo: { ...this.pluginInfo },
-      userData: { ...this.metadata },
+      userData: {
+        ...this.metadata,
+        // requester is stored outside metadata; merge it back so the
+        // Track.from(track.toJSON()) round-trip (and JSON persistence) keeps it
+        ...(this.requester !== undefined ? { requester: this.requester } : {}),
+      },
     };
   }
 

@@ -507,6 +507,55 @@ describe("Player track-end handling and lifecycle", () => {
     expect(trackPlays(node)).toEqual(["encoded-a", "encoded-b", "encoded-c"]);
   });
 
+  it("does not skip a queued track when the playing track is removed", async () => {
+    const player = createLivePlayer();
+    player.queue.enqueue(makeTrack("a")).enqueue(makeTrack("b")).enqueue(makeTrack("c"));
+    await player.play();
+
+    // Remove the currently playing track — node keeps playing "a", but the
+    // queue must not silently re-point at "b"
+    player.queue.remove(0, 1);
+    expect(player.currentTrack?.encoded).toBe("encoded-a");
+    expect(player.queue.tracksList.map((t) => (t as { encoded: string }).encoded)).toEqual([
+      "encoded-b",
+      "encoded-c",
+    ]);
+
+    // When "a" ends naturally, "b" plays next — nothing is skipped
+    node.ws.eventDispatcher.emit("trackEnd", "guild-1", makeTrack("a"), "finished");
+    await flush();
+
+    expect(trackPlays(node)).toEqual(["encoded-a", "encoded-b"]);
+    expect(player.currentTrack?.encoded).toBe("encoded-b");
+  });
+
+  it("playTrack position baseline: reset on replace, kept when noReplace is ignored", async () => {
+    vi.useFakeTimers();
+    const player = createLivePlayer();
+    player.queue.enqueue(makeTrack("a"));
+    // Lavalink echoes the playing track; a noReplace track change while a track
+    // is playing is silently ignored and reports the OLD still-playing track.
+    node.rest.updatePlayer = vi.fn().mockImplementation(
+      (_s: unknown, _g: unknown, o: { track?: { encoded?: string | null } }, noReplace?: boolean) => {
+        const req = o.track?.encoded ?? null;
+        if (req === "encoded-b" && noReplace === true) return { track: makeTrack("a") };
+        return { track: req != null ? makeTrack(req.slice("encoded-".length)) : makeTrack("echo") };
+      },
+    );
+
+    await player.play(); // starts "a"
+    await player.seek(25000); // position baseline 25000
+    expect(player.position).toBe(25000);
+
+    // ignored noReplace request — the old track keeps playing, baseline must survive
+    await player.playTrack(makeTrack("b"), { noReplace: true });
+    expect(player.position).toBe(25000);
+
+    // a real replacement restarts the playhead
+    await player.playTrack(makeTrack("c"));
+    expect(player.position).toBe(0);
+  });
+
   it("skip() with nothing playing emits queueEnd and does not throw when autoplay is on", async () => {
     const player = createLivePlayer();
     player.setAutoplay(true);
@@ -648,6 +697,21 @@ describe("Player track-end handling and lifecycle", () => {
     expect(call?.[3]).toBe(true); // noReplace
     expect(player.paused).toBe(true);
     expect(player.volume).toBe(80);
+  });
+
+  it("keeps a paused-start paused when the node reports TrackStartEvent", async () => {
+    const player = createLivePlayer();
+    await player.play(makeTrack("a"), { paused: true });
+
+    // Lavalink sends TrackStartEvent even for tracks started with paused: true
+    node.ws.eventDispatcher.emit("trackStart", "guild-1", makeTrack("a"));
+
+    expect(player.paused).toBe(true);
+    // resume() must actually hit the node instead of no-op'ing
+    await player.resume();
+    const resumeCall = node.rest.updatePlayer.mock.calls.at(-1);
+    expect(resumeCall?.[2].paused).toBe(false);
+    expect(player.paused).toBe(false);
   });
 
   it("destroys the player with the right reason when maxErrorsPerTime is exceeded", async () => {

@@ -1,5 +1,5 @@
 import type { YuKumo } from "../Kumo.ts";
-import type { RawGatewayPacket } from "./RawGatewayAdapter.ts";
+import { isVoicePacket, type RawGatewayPacket } from "./RawGatewayAdapter.ts";
 
 export interface DaveyAdapterOptions {
   enableDave?: boolean;
@@ -16,7 +16,7 @@ export class DaveyAdapter {
   }
 
   public handleRawPacket(packet: RawGatewayPacket): void {
-    if (!packet || !packet.t || !packet.d) return;
+    if (!isVoicePacket(packet)) return;
 
     if (packet.t === "VOICE_STATE_UPDATE") {
       const d = packet.d;

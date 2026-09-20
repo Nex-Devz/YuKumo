@@ -36,6 +36,19 @@ describe("Track", () => {
     expect(track.requester).toBe(requester);
   });
 
+  it("keeps requester through toJSON round-trip and JSON persistence", () => {
+    const requester = { id: "user-1" };
+    const track = Track.from(mockTrackData, requester);
+
+    const serialized = track.toJSON();
+    const restored = Track.from(serialized);
+    expect(restored.requester).toEqual(requester);
+
+    // survives JSON.stringify too (e.g. Player saveState → storage)
+    const viaJson = Track.from(JSON.parse(JSON.stringify(track)));
+    expect(viaJson.requester).toEqual(requester);
+  });
+
   it("should format duration", () => {
     const track = new Track(mockTrackData);
     expect(track.durationFormatted).toBe("3:32");

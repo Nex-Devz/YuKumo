@@ -107,6 +107,24 @@ describe("Queue", () => {
       expect(queue.next()).toBe("track-2");
     });
 
+    it("previous() in queue-repeat steps back without duplicating tracks", () => {
+      const queue = new Queue<string>();
+      queue.enqueue("track-1");
+      queue.enqueue("track-2");
+      queue.enqueue("track-3");
+      queue.start();
+      queue.setRepeatMode("queue");
+      queue.next(); // -> track-2
+      queue.next(); // -> track-3
+      queue.next(); // wraps -> track-1
+
+      expect(queue.previous()).toBe("track-3");
+      expect(queue.previous()).toBe("track-2");
+      // the array is untouched — no duplicated copies were re-inserted
+      expect(queue.tracksList).toEqual(["track-1", "track-2", "track-3"]);
+      expect(queue.size).toBe(3);
+    });
+
     it("should not repeat when mode is none", () => {
       const queue = new Queue<string>();
       queue.enqueue("track-1");
@@ -364,14 +382,35 @@ describe("Queue", () => {
       expect(queue.tracksList).toEqual(["track-2"]);
     });
 
-    it("should handle remove of current track and advance to next", () => {
+    it("should keep the removed current track as current until its natural end", () => {
       const queue = new Queue<string>();
       queue.enqueue("track-1");
       queue.enqueue("track-2");
       queue.start();
 
+      // The node is still playing track-1; removing it must not silently shift
+      // the cursor onto the not-yet-played track-2
       queue.remove(0, 1);
+      expect(queue.currentTrack).toBe("track-1");
+      expect(queue.tracksList).toEqual(["track-2"]);
+
+      // When the removed track ends, the next queued track takes its place
+      expect(queue.next()).toBe("track-2");
       expect(queue.currentTrack).toBe("track-2");
+    });
+
+    it("records the removed current track in history once and skips nothing", () => {
+      const queue = new Queue<string>();
+      queue.enqueue("track-1");
+      queue.enqueue("track-2");
+      queue.enqueue("track-3");
+      queue.start();
+
+      queue.remove(0, 1); // playing track-1 removed while it still plays
+      expect(queue.next()).toBe("track-2");
+      expect(queue.historyList).toEqual(["track-1"]);
+      expect(queue.next()).toBe("track-3");
+      expect(queue.historyList).toEqual(["track-1", "track-2"]);
     });
   });
 

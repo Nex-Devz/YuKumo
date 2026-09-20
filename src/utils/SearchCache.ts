@@ -56,7 +56,7 @@ export class SearchCache {
     // overwriting an existing key doesn't grow the map
     if (!this.cache.has(key) && this.cache.size >= this.maxSize) {
       const oldestKey = this.cache.keys().next().value;
-      if (oldestKey) {
+      if (oldestKey != null) {
         this.cache.delete(oldestKey);
       }
     }

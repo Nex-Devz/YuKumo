@@ -72,7 +72,7 @@ const FORMAT_NAMES: Record<number, string> = {
  */
 export class NodeLinkVoiceReceiver {
   private readonly options: NodeLinkVoiceReceiverOptions;
-  private readonly listeners = new Map<keyof NodeLinkVoiceReceiverEvents, Set<(...args: any[]) => void>>();
+  private readonly listeners = new Map<keyof NodeLinkVoiceReceiverEvents, Set<(...args: unknown[]) => void>>();
   private ws: WebSocket | null = null;
   private _connected = false;
   private _destroyed = false;
@@ -102,7 +102,7 @@ export class NodeLinkVoiceReceiver {
       set = new Set();
       this.listeners.set(event, set);
     }
-    set.add(callback as (...args: any[]) => void);
+    set.add(callback as (...args: unknown[]) => void);
     return this;
   }
 
@@ -113,7 +113,7 @@ export class NodeLinkVoiceReceiver {
     if (callback == null) {
       this.listeners.delete(event);
     } else {
-      this.listeners.get(event)?.delete(callback as (...args: any[]) => void);
+      this.listeners.get(event)?.delete(callback as (...args: unknown[]) => void);
     }
     return this;
   }

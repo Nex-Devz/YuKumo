@@ -133,6 +133,14 @@ export class RestClient {
     return this._isNodeLink;
   }
 
+  /**
+   * Base URL for server plugins that register their routes at the server root
+   * rather than under `/v4` (e.g. youtube-source's `/youtube`).
+   */
+  private get pluginBaseUrl(): string {
+    return this.rootUrl;
+  }
+
   public set isNodeLink(value: boolean) {
     this._isNodeLink = value;
   }
@@ -156,7 +164,7 @@ export class RestClient {
   private getCached<T>(key: string): T | null {
     if (!this.cacheEnabled) return null;
     const entry = this.responseCache.get(key);
-    if (!entry) return null;
+    if (entry == null) return null;
     if (Date.now() > entry.expiresAt) {
       this.responseCache.delete(key);
       return null;
@@ -168,7 +176,7 @@ export class RestClient {
     if (!this.cacheEnabled) return;
     if (this.responseCache.size >= this.cacheMaxEntries) {
       const firstKey = this.responseCache.keys().next().value;
-      if (firstKey) this.responseCache.delete(firstKey);
+      if (firstKey != null) this.responseCache.delete(firstKey);
     }
     this.responseCache.set(key, {
       data,
@@ -219,7 +227,7 @@ export class RestClient {
       if (response.status === 429) {
         const retryAfterHeader = response.headers?.get?.("Retry-After");
         let waitMs = 1000;
-        if (retryAfterHeader) {
+        if (retryAfterHeader != null && retryAfterHeader.length > 0) {
           const parsedSeconds = parseInt(retryAfterHeader, 10);
           if (!isNaN(parsedSeconds)) {
             waitMs = parsedSeconds * 1000;
@@ -524,7 +532,13 @@ export class RestClient {
         if (result.data.tracks.length === 0) {
           throw new LoadError(`Playlist is empty for identifier: ${identifier}`);
         }
-        return result.data.tracks[0] as TrackData;
+        // Lavalink picks the start track of a playlist (e.g. "Up Next" mixes)
+        // via info.selectedTrack — falling back to tracks[0] plays the wrong song
+        const selectedIndex = Math.min(
+          Math.max(0, result.data.info?.selectedTrack ?? 0),
+          result.data.tracks.length - 1,
+        );
+        return result.data.tracks[selectedIndex] as TrackData;
       }
       case "empty": {
         throw new LoadError(`No matches found for identifier: ${identifier}`);
@@ -693,7 +707,7 @@ export class RestClient {
   public async loadLyrics(encodedTrack: string, lang?: string): Promise<unknown> {
     const key = `loadlyrics:${encodedTrack}:${lang ?? ""}`;
     const cached = this.getCached<unknown>(key);
-    if (cached) return cached;
+    if (cached != null) return cached;
 
     const params: Record<string, string> = { encodedTrack };
     if (lang != null) params.lang = lang;
@@ -720,6 +734,46 @@ export class RestClient {
   /** NodeLink connection metrics (speed, downloaded bytes, duration) via /v4/connection */
   public async getConnectionMetrics(): Promise<unknown> {
     return this.request<unknown>("GET", "/connection");
+  }
+
+  /**
+   * Reads the youtube-source plugin status (`GET /youtube`): whether OAuth is
+   * enabled, the refresh token, and whether a poToken/visitorData pair is set.
+   * Requires the youtube-source plugin on the node.
+   */
+  public async getYouTubeStatus(): Promise<unknown> {
+    return this.request<unknown>("GET", "/youtube", undefined, undefined, this.pluginBaseUrl);
+  }
+
+  /**
+   * Configures the youtube-source plugin's poToken / visitorData at runtime
+   * (`POST /youtube`) to bypass bot-detection on YouTube playback. Get the
+   * values from the youtube-trusted-session-generator.
+   * Requires the youtube-source plugin on the node.
+   */
+  public async setYouTubePoToken(poToken: string, visitorData: string): Promise<void> {
+    await this.request<void>("POST", "/youtube", { poToken, visitorData }, undefined, this.pluginBaseUrl);
+  }
+
+  /**
+   * Supplies the youtube-source plugin an OAuth refresh token at runtime
+   * (`POST /youtube` with `{ refreshToken, skipInitialization }`), letting the
+   * node authenticate as a real account. Omit `refreshToken` to begin the
+   * device-code flow (the plugin logs the URL/code). Persist the returned token
+   * from the node logs and pass it back on the next boot to avoid re-auth.
+   * Requires the youtube-source plugin on the node.
+   */
+  public async setYouTubeRefreshToken(
+    refreshToken?: string,
+    skipInitialization = true,
+  ): Promise<void> {
+    await this.request<void>(
+      "POST",
+      "/youtube",
+      { refreshToken: refreshToken ?? null, skipInitialization },
+      undefined,
+      this.pluginBaseUrl,
+    );
   }
 
   /** Adds an audio mixer layer to a guild's player (NodeLink only) */
@@ -760,14 +814,14 @@ export class RestClient {
    * Note: This requires the Lavalink Lyrics plugin to be installed on the node.
    * @param encodedTrack The encoded track base64 string
    */
-  public async getLyrics(encodedTrack: string): Promise<any> {
+  public async getLyrics(encodedTrack: string): Promise<unknown> {
     const key = `lyrics:${encodedTrack}`;
-    const cached = this.getCached<any>(key);
-    if (cached) return cached;
+    const cached = this.getCached<unknown>(key);
+    if (cached != null) return cached;
 
     const params: Record<string, string> = { track: encodedTrack };
     // The lyrics plugin typically binds to /v4/lyrics or /v4/loadlyrics
-    const res = await this.request<any>("GET", "/lyrics", undefined, params);
+    const res = await this.request<unknown>("GET", "/lyrics", undefined, params);
     this.setCached(key, res);
     return res;
   }

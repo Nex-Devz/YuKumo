@@ -207,6 +207,38 @@ describe("setFilters with raw FiltersObject", () => {
   });
 });
 
+describe("player.skipTo", () => {
+  it("drives the node to the target track so audio matches the queue cursor", async () => {
+    const node = createMockNode();
+    const player = createPlayer(node);
+    player.updateVoiceState({ sessionId: "sess", endpoint: "ep", token: "tok", channelId: "ch" });
+    const a = { ...mockTrack, encoded: "A" };
+    const b = { ...mockTrack, encoded: "B" };
+    const c = { ...mockTrack, encoded: "C" };
+    player.queue.enqueue(a).enqueue(b).enqueue(c);
+    player.queue.start(); // cursor on A
+
+    const now = await player.skipTo(2); // jump to C
+
+    expect(now?.encoded).toBe("C");
+    expect(player.currentTrack?.encoded).toBe("C");
+    // The node was told to play C (not left on A)
+    const lastCall = (node.rest.updatePlayer as any).mock.calls.at(-1)[2];
+    expect(lastCall.track.encoded).toBe("C");
+    // Skipped-over track A went to history
+    expect(player.queue.historyList.some((t) => (t as TrackData).encoded === "A")).toBe(true);
+  });
+
+  it("returns null for an out-of-range index and leaves playback untouched", async () => {
+    const node = createMockNode();
+    const player = createPlayer(node);
+    player.queue.enqueue(mockTrack);
+    player.queue.start();
+    const result = await player.skipTo(99);
+    expect(result).toBeNull();
+  });
+});
+
 describe("player.get(start, end)", () => {
   it("returns the whole queue from start including the current track", () => {
     const player = createPlayer();

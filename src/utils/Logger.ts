@@ -14,6 +14,12 @@ const LEVEL_WEIGHT: Record<Exclude<LogLevel, "silent">, number> = {
   error: 3,
 };
 
+/**
+ * A {@link Logger} that writes to the console. This is the one place in Yukumo
+ * that is *meant* to touch the console, so the `no-console` rule is disabled
+ * for its body — every other module logs through an injected {@link Logger}.
+ */
+/* eslint-disable no-console */
 export class ConsoleLogger implements Logger {
   public debug(message: string, ...args: unknown[]): void {
     console.debug(`[DEBUG] ${message}`, ...args);
@@ -28,6 +34,7 @@ export class ConsoleLogger implements Logger {
     console.error(`[ERROR] ${message}`, ...args);
   }
 }
+/* eslint-enable no-console */
 
 /** Logger that discards everything; the default when no logger is configured */
 export class NoopLogger implements Logger {

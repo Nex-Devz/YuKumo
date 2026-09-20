@@ -46,7 +46,7 @@ export class VoiceStateTracker {
   public handleVoiceServerUpdate(guildId: string, data: VoiceServerUpdate): void {
     // Discord sends endpoint: null while allocating a new voice region —
     // keep the last working endpoint/token and wait for the real one
-    // instead of clobbering a live connection (shoukaku behavior)
+    // instead of clobbering a live connection
     if (data.endpoint == null) {
       return;
     }

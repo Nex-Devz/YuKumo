@@ -21,4 +21,14 @@ export default tseslint.config(
       "no-console": "warn",
     },
   },
+  {
+    // Tests routinely cast partial mocks to `any` and probe private state;
+    // strict typing there fights the intent instead of catching real bugs.
+    files: ["src/**/*.test.ts", "src/bench.ts"],
+    rules: {
+      "@typescript-eslint/no-explicit-any": "off",
+      "@typescript-eslint/strict-boolean-expressions": "off",
+      "no-console": "off",
+    },
+  },
 );
