@@ -4,11 +4,6 @@ import { isVoicePacket } from "./RawGatewayAdapter.ts";
 export interface MinimalDiscordJSClient {
   on(event: "raw", listener: (packet: { t: string; d: Record<string, unknown> }) => void): unknown;
   off?(event: "raw", listener: (packet: { t: string; d: Record<string, unknown> }) => void): unknown;
-  ws: {
-    shards: {
-      get(id: number): { send(data: unknown): void } | undefined;
-    };
-  };
   guilds: {
     cache: {
       get(id: string): { shardId: number; shard: { send(data: unknown): void } } | undefined;
@@ -24,30 +19,44 @@ export class DiscordJSAdapter {
   private readonly client: MinimalDiscordJSClient;
   private readonly kumo: YuKumo;
 
+  /**
+   * Surfaces rejected manager pipelines (voice teardown, plugin hooks) as debug
+   * events instead of letting them become unhandled rejections.
+   */
+  private readonly reportManagerError = (err: unknown): void => {
+    this.kumo.events.emit(
+      "debug",
+      `DiscordJS adapter pipeline error: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  };
+
   private readonly rawListener = (packet: { t: string; d: Record<string, unknown> }): void => {
     if (!isVoicePacket(packet)) return;
 
     if (packet.t === "VOICE_STATE_UPDATE") {
       const d = packet.d;
-      const botId = this.client.user?.id ?? this.kumo.userId;
-      if (botId != null && botId.length > 0 && String(d.user_id) !== botId) return;
-
-      this.kumo.handleVoiceStateUpdate({
-        guildId: String(d.guild_id ?? ""),
-        sessionId: String(d.session_id ?? ""),
-        channelId: d.channel_id != null ? String(d.channel_id) : null,
-        userId: String(d.user_id ?? ""),
-      });
+      // Identity (bot vs member) is enforced once, in Kumo.handleVoiceStateUpdate,
+      // so every update is forwarded here for a single source of truth.
+      void this.kumo
+        .handleVoiceStateUpdate({
+          guildId: String(d.guild_id ?? ""),
+          sessionId: String(d.session_id ?? ""),
+          channelId: d.channel_id != null ? String(d.channel_id) : null,
+          userId: String(d.user_id ?? ""),
+        })
+        .catch(this.reportManagerError);
     } else if (packet.t === "VOICE_SERVER_UPDATE") {
       const d = packet.d;
-      this.kumo.handleVoiceServerUpdate(String(d.guild_id ?? ""), {
-        token: String(d.token ?? ""),
-        endpoint: d.endpoint != null ? String(d.endpoint) : null,
-      });
+      void this.kumo
+        .handleVoiceServerUpdate(String(d.guild_id ?? ""), {
+          token: String(d.token ?? ""),
+          endpoint: d.endpoint != null ? String(d.endpoint) : null,
+        })
+        .catch(this.reportManagerError);
     } else if (packet.t === "CHANNEL_DELETE") {
       const d = packet.d;
       if (d.guild_id != null && d.id != null) {
-        void this.kumo.handleChannelDelete(String(d.guild_id), String(d.id));
+        void this.kumo.handleChannelDelete(String(d.guild_id), String(d.id)).catch(this.reportManagerError);
       }
     }
   };
@@ -75,7 +84,13 @@ export class DiscordJSAdapter {
     selfMute: boolean = false,
   ): void {
     const guild = this.client.guilds.cache.get(guildId);
-    if (!guild) return;
+    if (!guild) {
+      this.kumo.events.emit(
+        "debug",
+        `DiscordJS: guild ${guildId} is not cached; cannot send voice state update`,
+      );
+      return;
+    }
 
     guild.shard.send({
       op: 4,

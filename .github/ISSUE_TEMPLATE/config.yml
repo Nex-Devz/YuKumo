@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions & Support
+    url: https://discord.gg/devz
+    about: Ask usage questions and get help on the Discord server.
+  - name: Documentation
+    url: https://yukumo.vercel.app
+    about: Read the full Yukumo documentation.

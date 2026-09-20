@@ -180,12 +180,10 @@ export class WebSocketClient {
     }
 
     const globalWs = (globalThis as { WebSocket?: unknown }).WebSocket;
-    const WSClass = (
-      typeof globalWs !== "undefined" &&
-      (globalWs as { _isMockFunction?: boolean })._isMockFunction === true
-        ? globalWs
-        : WebSocket
-    ) as unknown as SocketConstructor;
+    const WSClass = (typeof globalWs !== "undefined" &&
+    (globalWs as { _isMockFunction?: boolean })._isMockFunction === true
+      ? globalWs
+      : WebSocket) as unknown as SocketConstructor;
 
     const instance = new WSClass(url, { headers });
     this.ws = instance as unknown as WebSocket;
@@ -278,12 +276,8 @@ export class WebSocketClient {
         instance.on("error", (err: unknown) => handleError(err));
       } else {
         instance.onopen = handleOpen;
-        instance.onmessage = ((event: MessageEventLike) => handleMsg(event)) as (
-          ...args: unknown[]
-        ) => void;
-        instance.onclose = ((event: CloseEventLike) => handleClose(event)) as (
-          ...args: unknown[]
-        ) => void;
+        instance.onmessage = ((event: MessageEventLike) => handleMsg(event)) as (...args: unknown[]) => void;
+        instance.onclose = ((event: CloseEventLike) => handleClose(event)) as (...args: unknown[]) => void;
         instance.onerror = handleError;
       }
     });

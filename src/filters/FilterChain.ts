@@ -93,10 +93,7 @@ export class FilterChain {
    * chain.setPluginFilter("lowPass", { smoothing: 20 });
    * chain.setPluginFilter("normalization", { maxAmplitude: 0.75, adaptive: true });
    */
-  public setPluginFilter(
-    name: string,
-    settings: Record<string, unknown> | false | null,
-  ): this {
+  public setPluginFilter(name: string, settings: Record<string, unknown> | false | null): this {
     if (settings == null || settings === false) {
       this.pluginFilters.delete(name);
     } else {

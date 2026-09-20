@@ -307,9 +307,7 @@ describe("NodeLink support", () => {
     const kumo = makeKumo(new MemoryStorage());
     fakeNodeReady(kumo);
     const player = await kumo.createPlayer({ guildId: "ll", voiceChannelId: "vc" });
-    await expect(player.setGaplessNext(makeTrack("x") as never)).rejects.toThrow(
-      "requires a NodeLink node",
-    );
+    await expect(player.setGaplessNext(makeTrack("x") as never)).rejects.toThrow("requires a NodeLink node");
     expect(() => player.createVoiceReceiver()).toThrow("requires a NodeLink node");
   });
 

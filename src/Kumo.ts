@@ -325,8 +325,7 @@ export class YuKumo {
         guildIds.map(async (guildId) => {
           try {
             return (await this.storage.get(`yukumo:player:${guildId}`)) as
-              | import("./player/Player.ts").PlayerJson
-              | null;
+              import("./player/Player.ts").PlayerJson | null;
           } catch {
             return null;
           }
@@ -353,9 +352,7 @@ export class YuKumo {
     return restored;
   }
 
-  private async restorePlayerFromSnapshot(
-    snapshot: import("./player/Player.ts").PlayerJson,
-  ): Promise<void> {
+  private async restorePlayerFromSnapshot(snapshot: import("./player/Player.ts").PlayerJson): Promise<void> {
     if (this.players.has(snapshot.guildId)) return;
 
     const preferredNode = this.nodes.get(snapshot.nodeId);
@@ -445,9 +442,7 @@ export class YuKumo {
     // next startup restores exactly where playback was
     if (this.resuming.enabled && this.resuming.persistPlayers) {
       await this.updatePlayersIndex();
-      await Promise.all(
-        this.players.getAll().map((p) => p.saveState().catch(() => undefined)),
-      );
+      await Promise.all(this.players.getAll().map((p) => p.saveState().catch(() => undefined)));
     }
     // DisconnectAllNodes keeps persisted queues on disk so restarts can restore them
     await this.players.destroyAll(DestroyReasons.DisconnectAllNodes);
@@ -599,7 +594,11 @@ export class YuKumo {
    * @param nodeName Optional specific node name to use
    */
   public async getLyrics(encodedTrack: string, nodeName?: string): Promise<unknown> {
-    const node = nodeName != null ? this.nodes.get(nodeName) : this.nodes.pick(encodedTrack);
+    // Prefer a lyrics-capable node. An explicit nodeName is honored as-is; the
+    // pool pick is capability-filtered so lyrics never route to a node that
+    // can't serve them.
+    const node =
+      nodeName != null ? this.nodes.get(nodeName) : this.nodes.pick(encodedTrack, { feature: "lyrics" });
     if (node == null) return null;
     try {
       // NodeLink ships lyrics natively on /v4/loadlyrics — no plugin required
@@ -674,11 +673,7 @@ export class YuKumo {
     const existingVoice = this.voice.getVoiceState(options.guildId);
     if (existingVoice != null) {
       player.setVoiceState(existingVoice);
-      if (
-        existingVoice.token != null &&
-        existingVoice.endpoint != null &&
-        existingVoice.sessionId != null
-      ) {
+      if (existingVoice.token != null && existingVoice.endpoint != null && existingVoice.sessionId != null) {
         await player.sendVoiceUpdate().catch(() => undefined);
       }
     }
@@ -897,9 +892,7 @@ export class YuKumo {
    * Finds players by criteria — `kumo.findPlayers({ node: "india-01", status: "playing" })`.
    * See PlayerManager.find for all supported fields.
    */
-  public findPlayers(
-    criteria: import("./player/PlayerManager.ts").PlayerFindCriteria = {},
-  ): Player[] {
+  public findPlayers(criteria: import("./player/PlayerManager.ts").PlayerFindCriteria = {}): Player[] {
     return this.players.find(criteria);
   }
 
@@ -968,9 +961,7 @@ export class YuKumo {
   private registerNodes(configs: NodeConfig[], httpHeaders?: Record<string, string>): void {
     for (const config of configs) {
       let merged =
-        httpHeaders != null
-          ? { ...config, httpHeaders: { ...httpHeaders, ...config.httpHeaders } }
-          : config;
+        httpHeaders != null ? { ...config, httpHeaders: { ...httpHeaders, ...config.httpHeaders } } : config;
       // Manager-level resuming turns it on for every node (NodeLink nodes skip it themselves)
       if (this.resuming.enabled) {
         merged = {
@@ -991,9 +982,9 @@ export class YuKumo {
       this.events.emit("nodeReady", nodeId);
       // Persist the session ID so a restarted process can reclaim the session
       if (this.resuming.enabled && node.ws.sessionId != null) {
-        void Promise.resolve(
-          this.storage.set(this.sessionStorageKey(nodeId), node.ws.sessionId),
-        ).catch(() => undefined);
+        void Promise.resolve(this.storage.set(this.sessionStorageKey(nodeId), node.ws.sessionId)).catch(
+          () => undefined,
+        );
       }
       // A fresh (non-resumed) Lavalink session starts with zero players —
       // push each affected player's full state back or they stay silent forever
@@ -1007,9 +998,7 @@ export class YuKumo {
     });
     ws.on("nodeReconnected", (nodeId: string) => this.events.emit("nodeReconnected", nodeId));
     ws.on("nodeError", (nodeId: string, error: Error) => this.events.emit("nodeError", nodeId, error));
-    ws.on("stats", (nodeId: string, stats: unknown) =>
-      this.events.emit("stats", nodeId, stats as NodeStats),
-    );
+    ws.on("stats", (nodeId: string, stats: unknown) => this.events.emit("stats", nodeId, stats as NodeStats));
     ws.on("debug", (msg: string) => this.events.emit("debug", msg));
     ws.on("socketClosed", (guildId: string, code: number, reason: string, byRemote: boolean) => {
       this.events.emit("socketClosed", guildId, code, reason, byRemote);

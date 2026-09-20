@@ -20,9 +20,7 @@ export interface LooseGatewayPacket {
  * object `d`. Shared by every framework adapter so the voice-packet guard is
  * identical (and type-safe) everywhere.
  */
-export function isVoicePacket(
-  packet: unknown,
-): packet is { t: string; d: Record<string, unknown> } {
+export function isVoicePacket(packet: unknown): packet is { t: string; d: Record<string, unknown> } {
   if (packet == null || typeof packet !== "object") return false;
   const { t, d } = packet as LooseGatewayPacket;
   return typeof t === "string" && t.length > 0 && d != null && typeof d === "object";
@@ -39,6 +37,17 @@ export class RawGatewayAdapter {
   }
 
   /**
+   * Surfaces rejected manager pipelines (voice teardown, plugin hooks) as debug
+   * events instead of letting them become unhandled rejections.
+   */
+  private readonly reportManagerError = (err: unknown): void => {
+    this.kumo.events.emit(
+      "debug",
+      `Raw gateway adapter pipeline error: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  };
+
+  /**
    * Processes a raw Gateway WebSocket event packet.
    * Call this from your raw gateway listener.
    */
@@ -47,22 +56,26 @@ export class RawGatewayAdapter {
 
     if (packet.t === "VOICE_STATE_UPDATE") {
       const d = packet.d;
-      this.kumo.handleVoiceStateUpdate({
-        guildId: String(d.guild_id ?? ""),
-        sessionId: String(d.session_id ?? ""),
-        channelId: d.channel_id != null ? String(d.channel_id) : null,
-        userId: String(d.user_id ?? ""),
-      });
+      void this.kumo
+        .handleVoiceStateUpdate({
+          guildId: String(d.guild_id ?? ""),
+          sessionId: String(d.session_id ?? ""),
+          channelId: d.channel_id != null ? String(d.channel_id) : null,
+          userId: String(d.user_id ?? ""),
+        })
+        .catch(this.reportManagerError);
     } else if (packet.t === "VOICE_SERVER_UPDATE") {
       const d = packet.d;
-      this.kumo.handleVoiceServerUpdate(String(d.guild_id ?? ""), {
-        token: String(d.token ?? ""),
-        endpoint: d.endpoint != null ? String(d.endpoint) : null,
-      });
+      void this.kumo
+        .handleVoiceServerUpdate(String(d.guild_id ?? ""), {
+          token: String(d.token ?? ""),
+          endpoint: d.endpoint != null ? String(d.endpoint) : null,
+        })
+        .catch(this.reportManagerError);
     } else if (packet.t === "CHANNEL_DELETE") {
       const d = packet.d;
       if (d.guild_id != null && d.id != null) {
-        void this.kumo.handleChannelDelete(String(d.guild_id), String(d.id));
+        void this.kumo.handleChannelDelete(String(d.guild_id), String(d.id)).catch(this.reportManagerError);
       }
     }
   }

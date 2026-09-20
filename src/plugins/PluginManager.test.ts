@@ -23,11 +23,7 @@ function makeTrack(encoded: string): TrackData {
 }
 import { PluginManager } from "./PluginManager.ts";
 import type { Plugin } from "./Plugin.ts";
-import {
-  createLavaSrcPlugin,
-  createSponsorBlockPlugin,
-  createFloweryTTSPlugin,
-} from "./LavaPlugins.ts";
+import { createLavaSrcPlugin, createSponsorBlockPlugin, createFloweryTTSPlugin } from "./LavaPlugins.ts";
 
 describe("server-plugin markers", () => {
   it("createLavaSrcPlugin records options and marks itself server-side", () => {

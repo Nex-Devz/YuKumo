@@ -170,9 +170,7 @@ describe("Player", () => {
     await player.pause();
     const callsAfterFirstPause = (node.rest.updatePlayer as ReturnType<typeof vi.fn>).mock.calls.length;
     await player.pause();
-    expect((node.rest.updatePlayer as ReturnType<typeof vi.fn>).mock.calls.length).toBe(
-      callsAfterFirstPause,
-    );
+    expect((node.rest.updatePlayer as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsAfterFirstPause);
     expect(player.paused).toBe(true);
     expect(player.status).toBe("idle");
   });
@@ -535,13 +533,15 @@ describe("Player track-end handling and lifecycle", () => {
     player.queue.enqueue(makeTrack("a"));
     // Lavalink echoes the playing track; a noReplace track change while a track
     // is playing is silently ignored and reports the OLD still-playing track.
-    node.rest.updatePlayer = vi.fn().mockImplementation(
-      (_s: unknown, _g: unknown, o: { track?: { encoded?: string | null } }, noReplace?: boolean) => {
-        const req = o.track?.encoded ?? null;
-        if (req === "encoded-b" && noReplace === true) return { track: makeTrack("a") };
-        return { track: req != null ? makeTrack(req.slice("encoded-".length)) : makeTrack("echo") };
-      },
-    );
+    node.rest.updatePlayer = vi
+      .fn()
+      .mockImplementation(
+        (_s: unknown, _g: unknown, o: { track?: { encoded?: string | null } }, noReplace?: boolean) => {
+          const req = o.track?.encoded ?? null;
+          if (req === "encoded-b" && noReplace === true) return { track: makeTrack("a") };
+          return { track: req != null ? makeTrack(req.slice("encoded-".length)) : makeTrack("echo") };
+        },
+      );
 
     await player.play(); // starts "a"
     await player.seek(25000); // position baseline 25000

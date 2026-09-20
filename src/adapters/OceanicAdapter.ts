@@ -17,25 +17,40 @@ export class OceanicAdapter {
   private readonly client: MinimalOceanicClient;
   private readonly kumo: YuKumo;
 
+  /**
+   * Surfaces rejected manager pipelines (voice teardown, plugin hooks) as debug
+   * events instead of letting them become unhandled rejections.
+   */
+  private readonly reportManagerError = (err: unknown): void => {
+    this.kumo.events.emit(
+      "debug",
+      `Oceanic adapter pipeline error: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  };
+
   private readonly packetListener = (packet: unknown): void => {
     if (!isVoicePacket(packet)) return;
     const { t, d } = packet;
 
     if (t === "VOICE_STATE_UPDATE") {
-      this.kumo.handleVoiceStateUpdate({
-        guildId: String(d.guild_id ?? ""),
-        sessionId: String(d.session_id ?? ""),
-        channelId: d.channel_id != null ? String(d.channel_id) : null,
-        userId: String(d.user_id ?? ""),
-      });
+      void this.kumo
+        .handleVoiceStateUpdate({
+          guildId: String(d.guild_id ?? ""),
+          sessionId: String(d.session_id ?? ""),
+          channelId: d.channel_id != null ? String(d.channel_id) : null,
+          userId: String(d.user_id ?? ""),
+        })
+        .catch(this.reportManagerError);
     } else if (t === "VOICE_SERVER_UPDATE") {
-      this.kumo.handleVoiceServerUpdate(String(d.guild_id ?? ""), {
-        token: String(d.token ?? ""),
-        endpoint: d.endpoint != null ? String(d.endpoint) : null,
-      });
+      void this.kumo
+        .handleVoiceServerUpdate(String(d.guild_id ?? ""), {
+          token: String(d.token ?? ""),
+          endpoint: d.endpoint != null ? String(d.endpoint) : null,
+        })
+        .catch(this.reportManagerError);
     } else if (t === "CHANNEL_DELETE") {
       if (d.guild_id != null && d.id != null) {
-        void this.kumo.handleChannelDelete(String(d.guild_id), String(d.id));
+        void this.kumo.handleChannelDelete(String(d.guild_id), String(d.id)).catch(this.reportManagerError);
       }
     }
   };

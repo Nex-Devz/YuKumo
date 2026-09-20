@@ -1,9 +1,6 @@
 import type { TrackData } from "../types/protocol.ts";
 
-export type BeforeTrackStartHandler = (
-  guildId: string,
-  track: TrackData,
-) => boolean | Promise<boolean>;
+export type BeforeTrackStartHandler = (guildId: string, track: TrackData) => boolean | Promise<boolean>;
 
 export class MiddlewareRegistry {
   private readonly beforeTrackStartHandlers: BeforeTrackStartHandler[] = [];

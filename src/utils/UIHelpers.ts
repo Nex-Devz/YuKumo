@@ -28,11 +28,7 @@ export function formatDuration(durationMs: number): string {
 }
 
 /** Generates a visual progress bar string for playback UI */
-export function getProgressBar(
-  currentMs: number,
-  totalMs: number,
-  options?: ProgressBarOptions,
-): string {
+export function getProgressBar(currentMs: number, totalMs: number, options?: ProgressBarOptions): string {
   const size = options?.size ?? 15;
   const charFilled = options?.charFilled ?? "▬";
   const charEmpty = options?.charEmpty ?? "▬";
@@ -50,7 +46,9 @@ export function getProgressBar(
 }
 
 /** Formats a paginated queue slice into Discord embed description data */
-export function createQueueEmbedData<T extends { info?: { title?: string; author?: string; length?: number } }>(
+export function createQueueEmbedData<
+  T extends { info?: { title?: string; author?: string; length?: number } },
+>(
   tracks: T[],
   currentTrack: T | null,
   page: number = 1,

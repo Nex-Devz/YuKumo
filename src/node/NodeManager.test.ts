@@ -173,3 +173,64 @@ describe("NodeManager", () => {
     expect(laterNode.createVoiceReceiver("guild-9").guildId).toBe("guild-9");
   });
 });
+
+describe("NodeManager capability-aware pick", () => {
+  function makeManager(): NodeManager {
+    return new NodeManager("123456");
+  }
+
+  function forceConnected(node: Node): void {
+    Object.defineProperty(node.ws, "state", { value: "connected", configurable: true });
+  }
+
+  it("routes a feature request to a capable node in a mixed pool", () => {
+    const manager = makeManager();
+    const lavalink = manager.add({
+      host: "h",
+      port: 1,
+      password: "p",
+      name: "lava",
+      type: "lavalink",
+    });
+    const nodelink = manager.add({
+      host: "h",
+      port: 2,
+      password: "p",
+      name: "nl",
+      type: "nodelink",
+    });
+    forceConnected(lavalink);
+    forceConnected(nodelink);
+
+    const picked = manager.pick("guild-1", { feature: "voiceReceive" });
+    expect(picked?.id).toBe("nl");
+  });
+
+  it("throws when no connected node supports the requested feature", () => {
+    const manager = makeManager();
+    const lavalink = manager.add({
+      host: "h",
+      port: 1,
+      password: "p",
+      name: "lava",
+      type: "lavalink",
+    });
+    forceConnected(lavalink);
+
+    expect(() => manager.pick("guild-1", { feature: "voiceReceive" })).toThrowError(
+      /does not support the "voiceReceive" feature/,
+    );
+  });
+
+  it("returns null (no throw) when the pool is empty for a feature request", () => {
+    const manager = makeManager();
+    expect(manager.pick("guild-1", { feature: "lyrics" })).toBeNull();
+  });
+
+  it("plain pick(guildId) is unchanged", () => {
+    const manager = makeManager();
+    const node = manager.add({ host: "h", port: 1, password: "p", name: "n" });
+    forceConnected(node);
+    expect(manager.pick("guild-1")?.id).toBe("n");
+  });
+});

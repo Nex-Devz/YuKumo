@@ -136,7 +136,10 @@ export class PluginManager {
    * reported via onPluginError and skipped so it can't abort the core
    * operation (play, destroy, connect) that triggered the pipeline.
    */
-  private async runIsolated<R>(hook: string, fn: () => R | Promise<R>): Promise<{ ok: true; value: Awaited<R> } | { ok: false }> {
+  private async runIsolated<R>(
+    hook: string,
+    fn: () => R | Promise<R>,
+  ): Promise<{ ok: true; value: Awaited<R> } | { ok: false }> {
     try {
       return { ok: true, value: await fn() };
     } catch (error) {
@@ -176,7 +179,9 @@ export class PluginManager {
   ): Promise<{ guildId: string; channelId: string } | null> {
     let current = { guildId, channelId };
     for (const handler of this.hookHandlers.beforeConnect) {
-      const result = await this.runIsolated("beforeConnect", () => handler(current.guildId, current.channelId));
+      const result = await this.runIsolated("beforeConnect", () =>
+        handler(current.guildId, current.channelId),
+      );
       if (!result.ok) continue;
       if (result.value === null) return null;
       current = result.value;

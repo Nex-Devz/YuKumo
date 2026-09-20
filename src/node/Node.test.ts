@@ -71,6 +71,7 @@ describe("Node penalties", () => {
 describe("Node session resuming", () => {
   it("enables resuming for NodeLink nodes too", async () => {
     const node = createNode(true, "test-node", true);
+    node.rest.getInfo = vi.fn().mockResolvedValue({ isNodelink: true });
     node.rest.updateSession = vi.fn().mockResolvedValue({ resuming: true, timeout: 60 });
 
     Object.defineProperty(node.ws, "sessionId", { value: "sess-1", writable: true });
@@ -84,6 +85,7 @@ describe("Node session resuming", () => {
 
   it("skips resuming when not configured", async () => {
     const node = createNode(false);
+    node.rest.getInfo = vi.fn().mockResolvedValue({ version: "4.0.7" });
     node.rest.updateSession = vi.fn().mockResolvedValue({ resuming: false, timeout: 0 });
     Object.defineProperty(node.ws, "sessionId", { value: "sess-1", writable: true });
 
@@ -104,5 +106,72 @@ describe("Node session resuming", () => {
       expect(node.isNodeLink).toBe(true);
       expect(node.rest.isNodeLink).toBe(true);
     });
+  });
+});
+
+describe("Node type, version & capabilities", () => {
+  function readyWithInfo(node: Node, info: Record<string, unknown>): Promise<void> {
+    node.rest.getInfo = vi.fn().mockResolvedValue(info);
+    Object.defineProperty(node.ws, "sessionId", { value: "sess-1", writable: true });
+    node.ws.eventDispatcher.emit("nodeReady", node.id);
+    return vi.waitFor(() => {
+      expect(node.capabilities).not.toBeNull();
+    });
+  }
+
+  it("resolves type/version/capabilities from a NodeLink /v4/info", async () => {
+    const node = createNode(undefined);
+    await readyWithInfo(node, {
+      isNodelink: true,
+      version: { semver: "3.10.0" },
+      filters: ["volume", "equalizer", "echo", "reverb"],
+      sourceManagers: ["youtube", "soundcloud", "bandcamp"],
+    });
+
+    expect(node.type).toBe("nodelink");
+    expect(node.version).toBe("3.10.0");
+    expect(node.supports("lyrics")).toBe(true);
+    expect(node.supports("voiceReceive")).toBe(true);
+    expect(node.supports("extraFilters")).toBe(true);
+    expect(node.supportsFilter("echo")).toBe(true);
+    expect(node.supportsFilter("reverb")).toBe(true);
+    expect(node.sourceManagers).toContain("bandcamp");
+  });
+
+  it("a Lavalink node reports no NodeLink-only features or extra filters", async () => {
+    const node = createNode(undefined);
+    await readyWithInfo(node, {
+      version: "4.0.7",
+      filters: ["volume", "equalizer", "karaoke"],
+      sourceManagers: ["youtube"],
+    });
+
+    expect(node.type).toBe("lavalink");
+    expect(node.version).toBe("4.0.7");
+    expect(node.supports("lyrics")).toBe(false);
+    expect(node.supports("voiceReceive")).toBe(false);
+    expect(node.supports("extraFilters")).toBe(false);
+    expect(node.supports("routeplanner")).toBe(true);
+    expect(node.supportsFilter("timescale")).toBe(true); // standard always present
+    expect(node.supportsFilter("echo")).toBe(false); // NodeLink-only
+  });
+
+  it("assertSupports throws YukumoUnsupportedFeatureError for missing features", async () => {
+    const node = createNode(false);
+    await readyWithInfo(node, { version: "4.0.7", filters: [], sourceManagers: [] });
+
+    expect(() => node.assertSupports("voiceReceive")).toThrowError(
+      /does not support the "voiceReceive" feature/,
+    );
+  });
+
+  it("respects a forced type before /v4/info is consulted", () => {
+    const nl = new Node({ host: "h", port: 1, password: "p", name: "nl", type: "nodelink" }, "1");
+    expect(nl.type).toBe("nodelink");
+    expect(nl.supports("lyrics")).toBe(true);
+
+    const ll = new Node({ host: "h", port: 2, password: "p", name: "ll", type: "lavalink" }, "1");
+    expect(ll.type).toBe("lavalink");
+    expect(ll.supports("lyrics")).toBe(false);
   });
 });

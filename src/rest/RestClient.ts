@@ -484,7 +484,13 @@ export class RestClient {
    * routed to the root when the node is flagged as NodeLink.
    */
   public async getVersion(): Promise<string> {
-    return this.request<string>("GET", "/version", undefined, undefined, this._isNodeLink ? this.rootUrl : this.baseUrl);
+    return this.request<string>(
+      "GET",
+      "/version",
+      undefined,
+      undefined,
+      this._isNodeLink ? this.rootUrl : this.baseUrl,
+    );
   }
 
   /**
@@ -569,10 +575,7 @@ export class RestClient {
    * Gets the SponsorBlock categories configured for a guild's player.
    * Requires the SponsorBlock plugin on the node.
    */
-  public async getSponsorBlockCategories(
-    sessionId: string | null,
-    guildId: string,
-  ): Promise<string[]> {
+  public async getSponsorBlockCategories(sessionId: string | null, guildId: string): Promise<string[]> {
     const sid = this.resolveSessionId(sessionId, `/sessions/-/players/${guildId}/sponsorblock/categories`);
     return this.request<string[]>("GET", `/sessions/${sid}/players/${guildId}/sponsorblock/categories`);
   }
@@ -630,11 +633,7 @@ export class RestClient {
     },
   ): Promise<SponsorBlockState> {
     const sid = this.resolveSessionId(sessionId, `/sessions/-/players/${guildId}/sponsorblock`);
-    return this.request<SponsorBlockState>(
-      "PATCH",
-      `/sessions/${sid}/players/${guildId}/sponsorblock`,
-      body,
-    );
+    return this.request<SponsorBlockState>("PATCH", `/sessions/${sid}/players/${guildId}/sponsorblock`, body);
   }
 
   /** Overrides the full SponsorBlock segment list on the node (NodeLink only) */
@@ -644,11 +643,9 @@ export class RestClient {
     segments: SponsorBlockSegment[],
   ): Promise<SponsorBlockState> {
     const sid = this.resolveSessionId(sessionId, `/sessions/-/players/${guildId}/sponsorblock`);
-    return this.request<SponsorBlockState>(
-      "POST",
-      `/sessions/${sid}/players/${guildId}/sponsorblock`,
-      { segments },
-    );
+    return this.request<SponsorBlockState>("POST", `/sessions/${sid}/players/${guildId}/sponsorblock`, {
+      segments,
+    });
   }
 
   /** Clears SponsorBlock state for a guild's player (NodeLink only) */
@@ -763,10 +760,7 @@ export class RestClient {
    * from the node logs and pass it back on the next boot to avoid re-auth.
    * Requires the youtube-source plugin on the node.
    */
-  public async setYouTubeRefreshToken(
-    refreshToken?: string,
-    skipInitialization = true,
-  ): Promise<void> {
+  public async setYouTubeRefreshToken(refreshToken?: string, skipInitialization = true): Promise<void> {
     await this.request<void>(
       "POST",
       "/youtube",
@@ -837,7 +831,9 @@ export class RestClient {
   }
 
   /** Encodes multiple track info objects into base64 track strings (NodeLink only) */
-  public async encodeTracks(tracks: Array<EncodeTrackPayload | { info: EncodeTrackPayload }>): Promise<string[]> {
+  public async encodeTracks(
+    tracks: Array<EncodeTrackPayload | { info: EncodeTrackPayload }>,
+  ): Promise<string[]> {
     return this.request<string[]>("POST", "/encodedtracks", tracks);
   }
 
@@ -869,21 +865,30 @@ export class RestClient {
   }
 
   /** Kills a NodeLink worker process */
-  public async killWorker(
-    body: { clusterId?: string | number; id?: string | number; pid?: string | number; code?: string },
-  ): Promise<Record<string, unknown>> {
+  public async killWorker(body: {
+    clusterId?: string | number;
+    id?: string | number;
+    pid?: string | number;
+    code?: string;
+  }): Promise<Record<string, unknown>> {
     return this.request<Record<string, unknown>>("PATCH", "/workers", body);
   }
 
   /** Gets the NodeLink YouTube configuration (masked credentials) */
   public async getYouTubeConfig(validate: boolean = false): Promise<YouTubeConfig> {
-    return this.request<YouTubeConfig>("GET", "/youtube/config", undefined, validate ? { validate: "true" } : undefined);
+    return this.request<YouTubeConfig>(
+      "GET",
+      "/youtube/config",
+      undefined,
+      validate ? { validate: "true" } : undefined,
+    );
   }
 
   /** Updates the NodeLink YouTube refresh token / visitor data */
-  public async setYouTubeConfig(
-    body: { refreshToken?: string; visitorData?: string },
-  ): Promise<Record<string, unknown>> {
+  public async setYouTubeConfig(body: {
+    refreshToken?: string;
+    visitorData?: string;
+  }): Promise<Record<string, unknown>> {
     return this.request<Record<string, unknown>>("PATCH", "/youtube/config", body);
   }
 

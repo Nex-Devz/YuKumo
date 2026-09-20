@@ -257,9 +257,12 @@ describe("kumo.broadcast", () => {
     kumo.getNode("main")!.ws.eventDispatcher.emit("trackStart", "g2", makeTrack("t"));
 
     const touched: string[] = [];
-    await kumo.broadcast((p) => {
-      touched.push(p.guildId);
-    }, { status: "playing" });
+    await kumo.broadcast(
+      (p) => {
+        touched.push(p.guildId);
+      },
+      { status: "playing" },
+    );
     expect(touched).toEqual(["g2"]);
   });
 });

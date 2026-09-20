@@ -2,6 +2,9 @@ import { describe, it, expect, vi } from "vitest";
 import { DiscordJSAdapter } from "./DiscordJSAdapter.ts";
 import { ErisAdapter } from "./ErisAdapter.ts";
 import { RawGatewayAdapter } from "./RawGatewayAdapter.ts";
+import { DaveyAdapter } from "./DaveyAdapter.ts";
+import { DiscordenoAdapter } from "./DiscordenoAdapter.ts";
+import { SeyfertAdapter } from "./SeyfertAdapter.ts";
 import { YuKumo } from "../Kumo.ts";
 
 describe("Discord Adapters", () => {
@@ -17,7 +20,6 @@ describe("Discord Adapters", () => {
       on: vi.fn((event: string, listener: any) => {
         if (event === "raw") rawListener = listener;
       }),
-      ws: { shards: { get: () => ({ send: sendMock }) } },
       guilds: { cache: { get: () => ({ shardId: 0, shard: { send: sendMock } }) } },
     };
 
@@ -98,11 +100,11 @@ describe("Discord Adapters", () => {
     });
   });
 
-  it("DaveyAdapter should process raw packets and build DAVE compatible voice state payload", async () => {
-    const { DaveyAdapter } = await import("./DaveyAdapter.ts");
+  it("DaveyAdapter should process raw packets, forward CHANNEL_DELETE and build the voice state payload", () => {
     const kumo = new YuKumo({ nodes: [] });
     const voiceServerSpy = vi.spyOn(kumo, "handleVoiceServerUpdate");
-    const adapter = new DaveyAdapter(kumo, { enableDave: true });
+    const channelDeleteSpy = vi.spyOn(kumo, "handleChannelDelete");
+    const adapter = new DaveyAdapter(kumo);
 
     adapter.handleRawPacket({
       t: "VOICE_SERVER_UPDATE",
@@ -110,10 +112,52 @@ describe("Discord Adapters", () => {
     });
     expect(voiceServerSpy).toHaveBeenCalledWith("333", { token: "tok_dave", endpoint: "ep_dave" });
 
+    adapter.handleRawPacket({ t: "CHANNEL_DELETE", d: { guild_id: "333", id: "444" } });
+    expect(channelDeleteSpy).toHaveBeenCalledWith("333", "444");
+
     const payload = adapter.buildVoiceStatePayload("333", "444");
     expect(payload).toEqual({
       op: 4,
       d: { guild_id: "333", channel_id: "444", self_deaf: true, self_mute: false },
     });
+  });
+
+  it("DiscordenoAdapter should forward voice events and CHANNEL_DELETE", () => {
+    const kumo = new YuKumo({ nodes: [] });
+    const channelDeleteSpy = vi.spyOn(kumo, "handleChannelDelete");
+    const adapter = new DiscordenoAdapter(kumo);
+
+    adapter.handleRaw({ t: "CHANNEL_DELETE", d: { guild_id: "555", id: "666" } });
+    expect(channelDeleteSpy).toHaveBeenCalledWith("555", "666");
+  });
+
+  it("SeyfertAdapter should route OP4 to the guild's shard and detach rawWS on destroy", () => {
+    const kumo = new YuKumo({ nodes: [] });
+    const sendMock = vi.fn();
+    const unsubscribeMock = vi.fn();
+    let rawListener: ((packet: unknown) => void) | undefined;
+
+    const mockSeyfertClient = {
+      events: {
+        rawWS: vi.fn((listener: (packet: unknown) => void) => {
+          rawListener = listener;
+          return unsubscribeMock;
+        }),
+      },
+      gateway: { send: sendMock, shardsCount: 4 },
+    };
+
+    const adapter = new SeyfertAdapter(mockSeyfertClient as any, kumo);
+    expect(rawListener).toBeDefined();
+
+    adapter.sendVoiceStateUpdate("123456789012345678", "456");
+    const expectedShard = Number((BigInt("123456789012345678") >> 22n) % 4n);
+    expect(sendMock).toHaveBeenCalledWith(expectedShard, {
+      op: 4,
+      d: { guild_id: "123456789012345678", channel_id: "456", self_deaf: true, self_mute: false },
+    });
+
+    adapter.destroy();
+    expect(unsubscribeMock).toHaveBeenCalled();
   });
 });

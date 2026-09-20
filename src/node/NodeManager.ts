@@ -2,6 +2,8 @@ import { Node } from "./Node.ts";
 import type { NodeSelector } from "./NodeSelector.ts";
 import { LeastUsedSelector } from "./NodeSelector.ts";
 import type { NodeConfig } from "../types/internal.ts";
+import type { NodeFeature } from "./capabilities.ts";
+import { YukumoUnsupportedFeatureError } from "../errors/index.ts";
 
 export class NodeManager {
   private readonly nodes = new Map<string, Node>();
@@ -71,9 +73,27 @@ export class NodeManager {
     await Promise.all(nodes.map((n) => n.close()));
   }
 
-  public pick(guildId: string): Node | null {
-    const nodes = this.getAll();
-    return this.selector.pick(nodes, guildId);
+  /**
+   * Picks a node for a guild via the active selector. When `opts.feature` is
+   * given, only nodes that support that feature are considered — so a
+   * NodeLink-only request (lyrics, chapters, voice receive, …) never lands on a
+   * plain Lavalink node. Throws {@link YukumoUnsupportedFeatureError} when no
+   * connected node supports the requested feature.
+   */
+  public pick(guildId: string, opts?: { feature?: NodeFeature }): Node | null {
+    const feature = opts?.feature;
+    if (feature == null) {
+      return this.selector.pick(this.getAll(), guildId);
+    }
+
+    const capable = this.getAll().filter((n) => n.supports(feature));
+    if (capable.length === 0) {
+      // Distinguish "no capable node" from "no node at all" with a clear error
+      // only when there are nodes but none qualify; empty pool returns null.
+      if (this.getConnected().length === 0) return null;
+      throw new YukumoUnsupportedFeatureError(feature, "<pool>", "mixed");
+    }
+    return this.selector.pick(capable, guildId);
   }
 
   public size(): number {

@@ -158,7 +158,7 @@ export class Player<TTrack extends TrackData = TrackData> {
   public readonly queue: Queue<TTrack>;
   public readonly filters: FilterChain;
   public readonly events: EventDispatcher;
-  
+
   /** Custom data map for developers to store persistent session variables */
   public readonly data: Map<string, unknown> = new Map();
 
@@ -787,6 +787,11 @@ export class Player<TTrack extends TrackData = TrackData> {
     // The new node's session has never seen this player's voice credentials
     this._voiceStateSent = false;
 
+    // Moving between server families can leave filters the target can't run
+    // (e.g. NodeLink extras onto a Lavalink node). Drop them gracefully — a
+    // failover the user didn't initiate must degrade, not throw.
+    this.dropUnsupportedFilters(node);
+
     if (this._status === "playing" && this.currentTrack != null) {
       await this.playTrack(this.currentTrack, { position: this.position });
     } else {
@@ -795,6 +800,23 @@ export class Player<TTrack extends TrackData = TrackData> {
     }
   }
 
+  /**
+   * Removes any active filter the target node can't run, emitting a debug line
+   * per dropped filter. Used on node moves so cross-family failover
+   * (NodeLink ↔ Lavalink) never sends an unknown filter that the node ignores
+   * or rejects.
+   */
+  private dropUnsupportedFilters(node: Node): void {
+    for (const filter of this.filters.getAll()) {
+      if (!node.supportsFilter(filter.name)) {
+        this.filters.remove(filter.name);
+        this.events.emit(
+          "debug",
+          `Dropped filter "${filter.name}" on move to node ${node.id} (${node.type}) — unsupported there`,
+        );
+      }
+    }
+  }
 
   /** Plays the previous track from the queue history */
   public async playPrevious(): Promise<TTrack | null> {
@@ -880,11 +902,7 @@ export class Player<TTrack extends TrackData = TrackData> {
   }
 
   /** Convenience wrapper for setVoiceChannel with options object */
-  public async setVoice(options: {
-    voiceId: string;
-    selfDeaf?: boolean;
-    selfMute?: boolean;
-  }): Promise<void> {
+  public async setVoice(options: { voiceId: string; selfDeaf?: boolean; selfMute?: boolean }): Promise<void> {
     return this.setVoiceChannel(options.voiceId, {
       selfDeaf: options.selfDeaf,
       selfMute: options.selfMute,
@@ -1284,9 +1302,7 @@ export class Player<TTrack extends TrackData = TrackData> {
         reject,
         timer: setTimeout(() => {
           this.playingWaiters = this.playingWaiters.filter((w) => w !== waiter);
-          reject(
-            new PlayerError(`Playback did not start within ${timeoutMs}ms`, this.guildId),
-          );
+          reject(new PlayerError(`Playback did not start within ${timeoutMs}ms`, this.guildId));
         }, timeoutMs),
       };
       (waiter.timer as { unref?: () => void }).unref?.();
@@ -1880,9 +1896,12 @@ export class Player<TTrack extends TrackData = TrackData> {
   }
 
   /** Kills a NodeLink worker process */
-  public async killWorker(
-    body: { clusterId?: string | number; id?: string | number; pid?: string | number; code?: string },
-  ): Promise<Record<string, unknown>> {
+  public async killWorker(body: {
+    clusterId?: string | number;
+    id?: string | number;
+    pid?: string | number;
+    code?: string;
+  }): Promise<Record<string, unknown>> {
     if (this._destroyed) throw new PlayerError("Player is destroyed", this.guildId);
     this.assertNodeLink("Workers");
     return this._node.rest.killWorker(body);
@@ -1896,7 +1915,10 @@ export class Player<TTrack extends TrackData = TrackData> {
   }
 
   /** Updates the NodeLink YouTube refresh token / visitor data */
-  public async setYouTubeConfig(body: { refreshToken?: string; visitorData?: string }): Promise<Record<string, unknown>> {
+  public async setYouTubeConfig(body: {
+    refreshToken?: string;
+    visitorData?: string;
+  }): Promise<Record<string, unknown>> {
     if (this._destroyed) throw new PlayerError("Player is destroyed", this.guildId);
     this.assertNodeLink("YouTube config");
     return this._node.rest.setYouTubeConfig(body);
@@ -2047,10 +2069,7 @@ export class Player<TTrack extends TrackData = TrackData> {
       }
     }
     if (!this.hasVoiceCredentials) {
-      this.events.emit(
-        "debug",
-        `Cannot resync player for guild ${this.guildId}: missing voice credentials`,
-      );
+      this.events.emit("debug", `Cannot resync player for guild ${this.guildId}: missing voice credentials`);
       return;
     }
 
@@ -2063,7 +2082,12 @@ export class Player<TTrack extends TrackData = TrackData> {
     const hasFilterKeys = Object.keys(filterPayload).length > 0;
 
     await this._node.rest.updatePlayer(sessionId, this.guildId, {
-      voice: { token: token!, endpoint: endpoint!, sessionId: voiceSessionId!, channelId: this._voiceChannelId },
+      voice: {
+        token: token!,
+        endpoint: endpoint!,
+        sessionId: voiceSessionId!,
+        channelId: this._voiceChannelId,
+      },
       ...(current != null
         ? {
             track: { encoded: current.encoded },

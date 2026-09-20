@@ -1,12 +1,5 @@
 export type SponsorCategory =
-  | "sponsor"
-  | "intro"
-  | "outro"
-  | "interaction"
-  | "selfpromo"
-  | "music_offtopic"
-  | "preview"
-  | "filler";
+  "sponsor" | "intro" | "outro" | "interaction" | "selfpromo" | "music_offtopic" | "preview" | "filler";
 
 export interface SponsorSegment {
   UUID: string;

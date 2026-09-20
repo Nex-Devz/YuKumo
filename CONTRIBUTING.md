@@ -1,89 +1,110 @@
 # Contributing to Yukumo
 
-Thank you for your interest in contributing to **Yukumo**! We welcome contributions from developers of all skill levels. Whether you are fixing a bug, adding a new feature, improving documentation, or optimizing performance, your help is greatly appreciated.
+Thanks for your interest in contributing to **Yukumo**. Contributions of every
+size are welcome — bug fixes, new features, documentation, and performance work
+all move the project forward.
 
 ---
 
-## 📜 Code of Conduct
+## Code of Conduct
 
-Please be respectful, friendly, and inclusive in all interactions across issues, pull requests, and discussions.
+Please be respectful, friendly, and inclusive across issues, pull requests, and
+discussions. Harassment or exclusionary behaviour of any kind is not tolerated.
 
 ---
 
-## 🛠️ Development Setup
+## Development Setup
 
 ### Prerequisites
-- [Node.js](https://nodejs.org/) v18.0.0 or higher (or [Bun](https://bun.sh/) v1.0.0+)
-- [npm](https://www.npmjs.com/) or [bun](https://bun.sh/)
 
-### 1. Fork and Clone the Repository
+- [Node.js](https://nodejs.org/) 18.0.0 or newer (or [Bun](https://bun.sh/) 1.0.0+)
+- [npm](https://www.npmjs.com/) (used in CI) or [bun](https://bun.sh/)
+
+### 1. Fork and clone
+
 ```bash
-git clone https://github.com/YOUR_USERNAME/Yukumo.git
-cd Yukumo/"Yukumo wrapper"
+git clone https://github.com/Nex-Devz/YuKumo.git
+cd YuKumo
 ```
 
-### 2. Install Dependencies
+### 2. Install dependencies
+
 ```bash
 npm install
 ```
 
 ---
 
-## 🚀 Development Workflow
+## Development Workflow
 
-### Scripts Overview
+### Scripts
 
 | Command | Description |
 |---|---|
-| `npm run build` | Builds CommonJS, ESM, and `.d.ts` declaration outputs using `tsup` |
-| `npm run typecheck` | Validates TypeScript types strictly (`tsc --noEmit`) |
-| `npm test` | Runs the full Vitest unit & integration test suite |
-| `npm run format` | Formats code using Prettier |
-| `npm run format:check` | Verifies code formatting compliance |
-| `npm run lint` | Runs ESLint analysis |
+| `npm run build` | Build ESM, CJS, and `.d.ts` outputs with `tsup` |
+| `npm run typecheck` | Strict type validation (`tsc --noEmit`) |
+| `npm test` | Run the Vitest unit test suite |
+| `npm run test:watch` | Run tests in watch mode |
+| `npm run test:coverage` | Run tests with a coverage report |
+| `npm run lint` | Run ESLint |
+| `npm run lint:fix` | Run ESLint and apply autofixes |
+| `npm run format` | Format source with Prettier |
+| `npm run format:check` | Verify formatting without writing |
 
 ---
 
-## 🧪 Testing Guidelines
+## Testing Guidelines
 
-Before submitting a Pull Request, ensure that all unit tests pass and new features are covered by tests:
+Before opening a pull request, make sure the same checks CI runs pass locally:
 
 ```bash
-# Run unit tests
-npm test
-
-# Run strict typechecks
+npm run lint
 npm run typecheck
-
-# Verify build outputs
+npm test
 npm run build
 ```
 
-When creating new features or fixing bugs:
-1. Add corresponding test files in `src/**/*.test.ts`.
-2. Maintain zero `any` types in TypeScript declarations.
-3. Include clear JSDoc annotations on all public functions, classes, and options so JavaScript users get rich autocomplete.
+When adding a feature or fixing a bug:
+
+1. Add or update tests in `src/**/*.test.ts`.
+2. Keep the public TypeScript surface free of `any`.
+3. Add clear JSDoc on public functions, classes, and options so JavaScript
+   users get rich autocomplete.
 
 ---
 
-## 📥 Submitting a Pull Request (PR)
+## Commit Messages
 
-1. **Create a Feature Branch**:
-   ```bash
-   git checkout -b feat/my-amazing-feature
-   ```
-2. **Commit Your Changes**:
-   Use descriptive commit messages following Conventional Commits (e.g. `feat: add custom filter preset`, `fix: player node failover retry`).
-   ```bash
-   git commit -m "feat: add custom filter preset"
-   ```
-3. **Push to Your Fork**:
-   ```bash
-   git push origin feat/my-amazing-feature
-   ```
-4. **Open a Pull Request**:
-   Navigate to [Nex-Devz/YuKumo](https://github.com/Nex-Devz/YuKumo) and submit your PR with a summary of changes and testing evidence.
+Follow [Conventional Commits](https://www.conventionalcommits.org/). Keep each
+commit small and focused.
+
+```
+feat: add custom filter preset
+fix: retry player node failover on transient error
+docs: clarify NodeLink auto-detection
+```
 
 ---
 
-Thank you for making Yukumo the best Lavalink client in the Discord ecosystem! 🚀
+## Submitting a Pull Request
+
+1. **Create a feature branch**
+
+   ```bash
+   git checkout -b feat/my-feature
+   ```
+
+2. **Commit your changes** using Conventional Commits.
+
+3. **Push to your fork**
+
+   ```bash
+   git push -u origin feat/my-feature
+   ```
+
+4. **Open a pull request** against the default branch with a summary of the
+   changes and evidence that the checks above pass.
+
+---
+
+Thanks for helping make Yukumo better.

@@ -87,11 +87,7 @@ export class PlayerManager {
    */
   public find(criteria: PlayerFindCriteria = {}): Player[] {
     const statuses =
-      criteria.status == null
-        ? null
-        : Array.isArray(criteria.status)
-          ? criteria.status
-          : [criteria.status];
+      criteria.status == null ? null : Array.isArray(criteria.status) ? criteria.status : [criteria.status];
 
     return this.getAll().filter((p) => {
       if (criteria.node != null && p.node.id !== criteria.node) return false;

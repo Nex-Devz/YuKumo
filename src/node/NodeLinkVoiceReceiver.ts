@@ -72,7 +72,10 @@ const FORMAT_NAMES: Record<number, string> = {
  */
 export class NodeLinkVoiceReceiver {
   private readonly options: NodeLinkVoiceReceiverOptions;
-  private readonly listeners = new Map<keyof NodeLinkVoiceReceiverEvents, Set<(...args: unknown[]) => void>>();
+  private readonly listeners = new Map<
+    keyof NodeLinkVoiceReceiverEvents,
+    Set<(...args: unknown[]) => void>
+  >();
   private ws: WebSocket | null = null;
   private _connected = false;
   private _destroyed = false;
@@ -208,7 +211,10 @@ export class NodeLinkVoiceReceiver {
     }
 
     this.reconnectAttempts++;
-    this.emit("debug", `Scheduling voice receive reconnect in ${delay}ms (attempt ${this.reconnectAttempts})`);
+    this.emit(
+      "debug",
+      `Scheduling voice receive reconnect in ${delay}ms (attempt ${this.reconnectAttempts})`,
+    );
 
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
@@ -285,7 +291,10 @@ export class NodeLinkVoiceReceiver {
 
       this.emit("debug", `Unknown binary voice op: ${op}`);
     } catch (err) {
-      this.emit("debug", `Failed to parse binary voice frame: ${err instanceof Error ? err.message : String(err)}`);
+      this.emit(
+        "debug",
+        `Failed to parse binary voice frame: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 

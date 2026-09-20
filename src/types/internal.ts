@@ -12,9 +12,17 @@ export interface NodeConfig {
   /** Enable Lavalink session resuming for this node (implied when resumeKey is set) */
   resuming?: boolean;
   /**
+   * Server family for this node. `"auto"` (default) detects the type from
+   * `/v4/info` on connect; `"nodelink"`/`"lavalink"` force it. Resolved to a
+   * concrete type after `ready` and exposed as `node.type`.
+   */
+  type?: "lavalink" | "nodelink" | "auto";
+  /**
    * Marks this node as NodeLink (PerformanC's Lavalink alternative).
    * Auto-detected from /v4/info (`isNodelink`) when omitted. NodeLink v3+
    * supports session resuming just like Lavalink.
+   *
+   * @deprecated Prefer `type: "nodelink"`. Still honored for back-compat.
    */
   isNodeLink?: boolean;
   maxRetries?: number;

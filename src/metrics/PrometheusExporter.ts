@@ -32,7 +32,9 @@ export class PrometheusExporter {
       lines.push(`yukumo_node_players{${nodeLabel}} ${stats.players}`);
       lines.push(`yukumo_node_playing_players{${nodeLabel}} ${stats.playingPlayers}`);
       lines.push(`yukumo_node_uptime_seconds{${nodeLabel}} ${Math.floor(stats.uptime / 1000)}`);
-      lines.push(`yukumo_node_cpu_lavalink_load{${nodeLabel}} ${stats.cpu.lavalinkLoad ?? stats.cpu.nodelinkLoad ?? 0}`);
+      lines.push(
+        `yukumo_node_cpu_lavalink_load{${nodeLabel}} ${stats.cpu.lavalinkLoad ?? stats.cpu.nodelinkLoad ?? 0}`,
+      );
       lines.push(`yukumo_node_cpu_system_load{${nodeLabel}} ${stats.cpu.systemLoad}`);
       lines.push(`yukumo_node_memory_used_bytes{${nodeLabel}} ${stats.memory.used}`);
       lines.push(`yukumo_node_memory_allocated_bytes{${nodeLabel}} ${stats.memory.allocated}`);

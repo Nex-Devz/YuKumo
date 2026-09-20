@@ -5,9 +5,12 @@
 <p><i>A high-performance, framework-agnostic Lavalink v4 client for JavaScript and TypeScript.</i></p>
 
 [![npm version](https://img.shields.io/npm/v/yukumo?color=F472B6&label=npm&style=for-the-badge&logo=npm&logoColor=white)](https://www.npmjs.com/package/yukumo)
+[![npm downloads](https://img.shields.io/npm/dm/yukumo?color=F472B6&label=downloads&style=for-the-badge&logo=npm&logoColor=white)](https://www.npmjs.com/package/yukumo)
+[![CI](https://img.shields.io/github/actions/workflow/status/Nex-Devz/YuKumo/ci.yml?branch=master&label=CI&style=for-the-badge&logo=githubactions&logoColor=white)](https://github.com/Nex-Devz/YuKumo/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-8B5CF6?style=for-the-badge)](LICENSE)
 [![Lavalink v4](https://img.shields.io/badge/Lavalink-v4-1DB954?style=for-the-badge&logo=youtubemusic&logoColor=white)](https://lavalink.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Discord](https://img.shields.io/badge/Discord-Join-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/devz)
 [![Documentation](https://img.shields.io/badge/Docs-yukumo.vercel.app-000000?style=for-the-badge&logo=vercel&logoColor=white)](https://yukumo.vercel.app)
 
 </div>
@@ -39,8 +42,10 @@ Built for production: multi-node load balancing, automatic failover, distributed
 - [Quick Start](#quick-start)
 - [Usage Examples](#usage-examples)
 - [Plugins](#plugins)
+- [NodeLink support](#nodelink-support)
 - [Observability](#observability)
 - [Reference Bots](#reference-bots)
+- [FAQ](#faq)
 - [Community](#community--contributing)
 - [License](#license)
 
@@ -326,6 +331,77 @@ Runtime SponsorBlock skip categories and youtube-source poToken/OAuth are set pe
 
 ---
 
+## NodeLink support
+
+Yukumo connects to a Lavalink v4 node, a NodeLink node, or **both at once in one pool** with the
+same API. The server family is detected from `/v4/info` on connect (or forced via
+`type`), and each node exposes what it can do so NodeLink-only features never
+accidentally run on a plain Lavalink node.
+
+```js
+const { YuKumo, createLavalinkNode, createNodeLinkNode } = require("yukumo");
+
+const kumo = new YuKumo({
+  nodes: [
+    createLavalinkNode({ host: "ll.example", port: 2333, password: "pw" }),
+    createNodeLinkNode({ host: "nl.example", port: 2333, password: "pw" }),
+  ],
+  send: (guildId, payload) => client.guilds.cache.get(guildId)?.shard.send(payload),
+});
+
+// After a node is ready:
+node.type;              // "lavalink" | "nodelink"
+node.version;           // server version string
+node.sourceManagers;    // e.g. ["youtube", "soundcloud", "bandcamp", ...]
+node.supports("lyrics");        // true on NodeLink
+node.supports("voiceReceive");  // true on NodeLink
+node.supportsFilter("echo");    // NodeLink extra filter
+```
+
+**Capability-aware routing.** Feature requests only go to a node that can serve them:
+
+```js
+// Routed to a lyrics-capable node automatically in a mixed pool
+const lyrics = await kumo.getLyrics(encodedTrack);
+
+// Pick a node for a specific capability yourself
+const node = kumo.nodes.pick(guildId, { feature: "voiceReceive" });
+```
+
+If no connected node supports a requested feature, Yukumo throws a typed
+`YukumoUnsupportedFeatureError` (`code: "UNSUPPORTED_FEATURE"`, with `feature`, `nodeId`,
+`nodeType`) instead of failing silently. `node.assertSupports(feature)` does the same on demand.
+
+**Feature / capability matrix:**
+
+| Feature | Lavalink v4 | NodeLink |
+|---|:---:|:---:|
+| Playback, queue, standard filters | ✅ | ✅ |
+| Session resume, route planner | ✅ | ✅ |
+| Extra DSP filters (`echo`, `chorus`, `compressor`, `phaser`, `highpass`, `flanger`, `reverb`, `spatial`, `phonograph`, `tesseract`) | ❌ | ✅ |
+| Built-in lyrics (`getLyrics`, `loadLyrics`) + live lyrics subscribe | plugin | ✅ native |
+| Chapters (`player.getChapters`), meaning (`getTrackMeaning`) | ❌ | ✅ |
+| Voice receive (`node.createVoiceReceiver`) | ❌ | ✅ |
+| Direct/raw stream, mixer layers, sync groups | ❌ | ✅ |
+| youtube-source poToken / OAuth config | plugin | ✅ |
+
+**Cross-family failover.** When a player moves between a NodeLink node and a Lavalink node,
+filters the target can't run (NodeLink extras) are dropped automatically with a `debug` log — audio
+keeps playing rather than erroring.
+
+**NodeLink extra filters** are applied through the same API as standard ones:
+
+```js
+await player.setEcho({ delay: 200, feedback: 0.4 });
+await player.setReverb({ roomSize: 0.8, damping: 0.5 });
+```
+
+> Detection is automatic. Use `createNodeLinkNode()` / `type: "nodelink"` only to skip the
+> `/v4/info` round-trip or to force a family. NodeLink is a **server**; Yukumo has no dependency on
+> it and copies none of its code.
+
+---
+
 ## Observability & Logging
 
 Export live node and player metrics in OpenMetrics format for Prometheus / Grafana:
@@ -362,6 +438,44 @@ Complete, runnable bot implementations live in [`examples/`](examples):
 | [`examples/js-cjs/bot.js`](examples/js-cjs/bot.js) | CommonJS JavaScript |
 | [`examples/js-esm/bot.js`](examples/js-esm/bot.js) | ESM JavaScript |
 | [`examples/ts/bot.ts`](examples/ts/bot.ts) | TypeScript |
+| [`examples/discordjs`](examples/discordjs) | discord.js v14 (slash commands) |
+| [`examples/eris`](examples/eris) | Eris |
+| [`examples/seyfert`](examples/seyfert) | Seyfert |
+| [`examples/oceanic`](examples/oceanic) | Oceanic.js |
+| [`examples/discordeno`](examples/discordeno) | Discordeno |
+
+---
+
+## FAQ
+
+**Do I need a Lavalink server to use Yukumo?**
+Yes for playback — Yukumo is a client for Lavalink v4 (or NodeLink). You can,
+however, encode, decode, and build tracks entirely on the client with no server
+using `Track.encode()` / `Track.decode()` / `Track.build()`.
+
+**Does Yukumo work with NodeLink?**
+Yes — as a first-class node type. NodeLink is auto-detected from `/v4/info`; its extra REST
+endpoints, voice receiver, mixer, native lyrics/chapters, extra DSP filters, and gapless playback
+are exposed automatically. Lavalink and NodeLink nodes can share one pool, and feature requests are
+routed to a capable node. Force the family with `type: "nodelink"` / `createNodeLinkNode()`. See
+[NodeLink support](#nodelink-support).
+
+**Which Discord libraries are supported?**
+First-class adapters ship for `discord.js` v14, `Eris`, `Seyfert`, `Oceanic.js`,
+`Davey`, and `Discordeno`, plus a raw gateway adapter for anything else.
+
+**Does it support CommonJS and ESM?**
+Both. The package ships an `exports` map with ESM, CJS, and type declarations.
+
+**How do I run multiple nodes / load balance?**
+Pass multiple entries in `nodes` and pick a strategy via `defaultNodeSelector`
+(e.g. `LeastPenaltySelector`, `RoundRobinSelector`, `CustomSelector`). Players
+migrate automatically on node disconnect or failure.
+
+**Does state survive a bot restart?**
+With `resuming` enabled, session IDs and player snapshots persist (Memory or
+Redis) and are restored on `init()` — a live resumed session is adopted with no
+audio gap.
 
 ---
 

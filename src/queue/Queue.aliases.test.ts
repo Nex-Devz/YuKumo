@@ -38,7 +38,7 @@ describe("Queue Aliases", () => {
     queue.enqueue("track-1");
     queue.enqueue("track-2");
     queue.enqueue("track-3");
-    
+
     const removed = queue.splice(1, 1);
     expect(removed).toEqual(["track-2"]);
     expect(queue.length).toBe(2);

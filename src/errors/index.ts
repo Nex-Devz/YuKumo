@@ -108,3 +108,23 @@ export class LoadError extends YuKumoError {
     this.name = "LoadError";
   }
 }
+
+/**
+ * Thrown when a feature is requested on a node that does not support it — e.g.
+ * calling a NodeLink-only method (lyrics, chapters, voice receive, an extra
+ * filter) on a plain Lavalink node. Carries the offending feature and the node
+ * so callers can route to a capable node or fall back.
+ */
+export class YukumoUnsupportedFeatureError extends YuKumoError {
+  public readonly feature: string;
+  public readonly nodeId: string;
+  public readonly nodeType: string;
+
+  constructor(feature: string, nodeId: string, nodeType: string) {
+    super(`Node "${nodeId}" (${nodeType}) does not support the "${feature}" feature`, "UNSUPPORTED_FEATURE");
+    this.name = "YukumoUnsupportedFeatureError";
+    this.feature = feature;
+    this.nodeId = nodeId;
+    this.nodeType = nodeType;
+  }
+}

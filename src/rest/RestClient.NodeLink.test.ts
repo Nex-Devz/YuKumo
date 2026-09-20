@@ -62,13 +62,21 @@ describe("RestClient (NodeLink)", () => {
   describe("SponsorBlock", () => {
     it("GETs full sponsorblock state from the NodeLink path", async () => {
       const client = createClient();
-      const state = { enabled: true, categories: ["sponsor"], actionTypes: ["skip"], segments: [], skipMarginMs: 150 };
+      const state = {
+        enabled: true,
+        categories: ["sponsor"],
+        actionTypes: ["skip"],
+        segments: [],
+        skipMarginMs: 150,
+      };
       mockFetch.mockResolvedValue(mockResponse(200, state));
 
       const result = await client.getNodeLinkSponsorBlock("sess-1", "12345678901234567");
 
       expect(result).toEqual(state);
-      expect(urlOf(mockFetch.mock.calls[0])).toContain("/v4/sessions/sess-1/players/12345678901234567/sponsorblock");
+      expect(urlOf(mockFetch.mock.calls[0])).toContain(
+        "/v4/sessions/sess-1/players/12345678901234567/sponsorblock",
+      );
       expect((mockFetch.mock.calls[0] as any[])[1].method).toBe("GET");
     });
 
@@ -141,7 +149,17 @@ describe("RestClient (NodeLink)", () => {
       const client = createClient();
       mockFetch.mockResolvedValue(mockResponse(200, ["AAA", "BBB"]));
 
-      const result = await client.encodeTracks([{ title: "T", author: "A", length: 1, identifier: "i", isStream: false, sourceName: "youtube", position: 0 } as never]);
+      const result = await client.encodeTracks([
+        {
+          title: "T",
+          author: "A",
+          length: 1,
+          identifier: "i",
+          isStream: false,
+          sourceName: "youtube",
+          position: 0,
+        } as never,
+      ]);
 
       expect(result).toEqual(["AAA", "BBB"]);
       expect(urlOf(mockFetch.mock.calls[0])).toContain("/v4/encodedtracks");
@@ -196,7 +214,9 @@ describe("RestClient (NodeLink)", () => {
 
     it("GETs and PATCHes youtube config", async () => {
       const client = createClient();
-      mockFetch.mockResolvedValue(mockResponse(200, { refreshToken: "***", isConfigured: true, isValid: null }));
+      mockFetch.mockResolvedValue(
+        mockResponse(200, { refreshToken: "***", isConfigured: true, isValid: null }),
+      );
 
       await client.getYouTubeConfig(true);
       expect(urlOf(mockFetch.mock.calls[0])).toContain("/v4/youtube/config?validate=true");

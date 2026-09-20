@@ -37,7 +37,7 @@ describe("Queue Extensions", () => {
     queue.enqueue("track-1");
     queue.enqueue("track-2");
     queue.enqueue("track-3");
-    
+
     const removed = queue.removeRange(1, 2);
     expect(removed).toEqual(["track-1", "track-2"]);
     expect(queue.tracksList).toEqual(["track-0", "track-3"]);

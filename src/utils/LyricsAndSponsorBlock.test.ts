@@ -22,9 +22,7 @@ describe("Lyrics & SponsorBlock Integration", () => {
   describe("SponsorBlockClient", () => {
     it("should find target skip position when in sponsor range", () => {
       const client = new SponsorBlockClient();
-      const segments = [
-        { UUID: "seg-1", category: "sponsor" as const, startMs: 10000, endMs: 25000 },
-      ];
+      const segments = [{ UUID: "seg-1", category: "sponsor" as const, startMs: 10000, endMs: 25000 }];
 
       // At position 15000ms (inside segment) -> skip target is 25000ms
       expect(client.getSkipPosition(15000, segments)).toBe(25000);

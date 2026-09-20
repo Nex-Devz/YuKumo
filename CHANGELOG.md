@@ -5,6 +5,13 @@ All notable changes to the `yukumo` Lavalink client library will be documented i
 ## [Unreleased]
 
 ### Added
+- **First-class NodeLink support (mixed pools)**: connect to Lavalink, NodeLink, or both at once with one API.
+  - `NodeConfig.type: "lavalink" | "nodelink" | "auto"` (default `"auto"`, detected from `/v4/info`); legacy `isNodeLink` still honored. `createNodeLinkNode()` / `createLavalinkNode()` config helpers.
+  - `node.type`, `node.version`, `node.capabilities`, `node.sourceManagers` getters resolved on `ready`.
+  - Capability system: `node.supports(feature)`, `node.supportsFilter(name)`, `node.assertSupports(feature)` over a `NodeFeature` union (`lyrics`, `chapters`, `meaning`, `voiceReceive`, `extraFilters`, `stream`, `mixer`, `sponsorblock`, `lyricsSubscribe`, `groups`, `youtubeConfig`, `routeplanner`, `sessionResume`). NodeLink's enabled filter/source sets are read from `/v4/info`.
+  - `YukumoUnsupportedFeatureError` (`code: "UNSUPPORTED_FEATURE"`) thrown instead of failing silently when a feature isn't available on the connected node.
+  - Capability-aware selection: `NodeManager.pick(guildId, { feature })` filters candidates by capability; `kumo.getLyrics()` routes to a lyrics-capable node in a mixed pool.
+  - Cross-family failover: `Player.setNode()` drops filters the target node can't run (NodeLink extras onto Lavalink) with a debug log, so moves degrade gracefully instead of erroring.
 - **Server-side plugin filters (LavaDSPX & any filter plugin)**: `player.setPluginFilter(name, settings)` and `FilterChain.setPluginFilter()` / `getPluginFilter()` / `hasPluginFilter()` pass arbitrary filter-plugin settings through Lavalink v4's `pluginFilters` (e.g. LavaDSPX `highPass`, `lowPass`, `normalization`, `echo`). Settings are serialized untouched and round-trip through `apply()` / `toPayload()`; pass `false`/`null` to remove.
 - **youtube-source plugin config**: `RestClient.getYouTubeStatus()`, `setYouTubePoToken(poToken, visitorData)`, and `setYouTubeRefreshToken(refreshToken?, skipInitialization?)` drive the youtube-source plugin's poToken/OAuth at the server root to bypass YouTube bot-detection.
 - **`Player.skipTo(index)`**: player-level jump that starts the target queue track on the node, so the queue cursor never points at a not-yet-played track while old audio is still running (skipped tracks go to history).

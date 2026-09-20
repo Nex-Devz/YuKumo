@@ -11,9 +11,7 @@ async function main() {
     ],
   });
 
-  const davey = new DaveyAdapter(yukumo, {
-    enableDave: true,
-  });
+  const davey = new DaveyAdapter(yukumo);
 
   const mockGatewayPacket = {
     t: "VOICE_SERVER_UPDATE",

@@ -25,9 +25,7 @@ function makeTrack(encoded: string): TrackData {
   };
 }
 
-const nodeConfigs: NodeConfig[] = [
-  { host: "localhost", port: 2333, password: "pw", name: "main" },
-];
+const nodeConfigs: NodeConfig[] = [{ host: "localhost", port: 2333, password: "pw", name: "main" }];
 
 function silenceWs(node: Node | undefined): void {
   Object.defineProperty(node!.ws, "eventDispatcher", {
@@ -142,8 +140,10 @@ describe("bug regressions", () => {
       const connectSpy = vi.spyOn(player, "connect");
 
       // 4014 (Disconnected) — node reported the voice socket dropped
-      (kumo as unknown as { handleVoiceSocketClosed(g: string, c: number): void })
-        .handleVoiceSocketClosed("g5", 4014);
+      (kumo as unknown as { handleVoiceSocketClosed(g: string, c: number): void }).handleVoiceSocketClosed(
+        "g5",
+        4014,
+      );
 
       expect(connectSpy).toHaveBeenCalled();
     });

@@ -8,3 +8,7 @@ site/
 .vscode/
 .idea/
 *.log
+
+# Internal audit / planning notes (not for the public repo)
+TASK.md
+REPO_AUDIT.md

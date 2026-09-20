@@ -348,12 +348,7 @@ export class Queue<T> {
 
   /** Swaps two tracks at indexA and indexB in the queue */
   public swap(indexA: number, indexB: number): boolean {
-    if (
-      indexA < 0 ||
-      indexA >= this.tracks.length ||
-      indexB < 0 ||
-      indexB >= this.tracks.length
-    ) {
+    if (indexA < 0 || indexA >= this.tracks.length || indexB < 0 || indexB >= this.tracks.length) {
       return false;
     }
     if (indexA === indexB) return true;

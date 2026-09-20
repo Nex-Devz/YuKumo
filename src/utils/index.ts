@@ -53,7 +53,8 @@ export async function retry<T>(fn: () => Promise<T>, options?: RetryOptions): Pr
         // Otherwise use half-jittered exponential backoff to avoid retry waves.
         const retryAfter = (error as { retryAfter?: number } | null)?.retryAfter;
         const base = Math.min(baseDelay * 2 ** attempt, maxDelay);
-        const delay = retryAfter != null && retryAfter > 0 ? retryAfter : base / 2 + Math.random() * (base / 2);
+        const delay =
+          retryAfter != null && retryAfter > 0 ? retryAfter : base / 2 + Math.random() * (base / 2);
         await new Promise((resolve) => setTimeout(resolve, delay));
         continue;
       }

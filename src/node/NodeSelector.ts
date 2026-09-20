@@ -38,11 +38,11 @@ export class RegionSelector implements NodeSelector {
     if (connected.length === 0) return null;
 
     const regionalNodes = connected.filter((n) => n.config.region === this.region);
-    
+
     if (regionalNodes.length > 0) {
       return this.fallback.pick(regionalNodes, guildId);
     }
-    
+
     return this.fallback.pick(connected, guildId);
   }
 }

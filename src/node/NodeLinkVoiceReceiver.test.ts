@@ -8,7 +8,10 @@ const mockState = vi.hoisted(() => {
     public handlers = new Map<string, Listener[]>();
     public closed = false;
 
-    public constructor(public url: string, public options: Record<string, unknown>) {
+    public constructor(
+      public url: string,
+      public options: Record<string, unknown>,
+    ) {
       MockWS.instances.push(this);
     }
 
@@ -33,7 +36,9 @@ const mockState = vi.hoisted(() => {
   return { MockWS };
 });
 
-const MockWS = mockState.MockWS as typeof mockState.MockWS & { instances: InstanceType<typeof mockState.MockWS>[] };
+const MockWS = mockState.MockWS as typeof mockState.MockWS & {
+  instances: InstanceType<typeof mockState.MockWS>[];
+};
 type MockWSInstance = InstanceType<typeof mockState.MockWS>;
 
 vi.mock("ws", () => ({ default: mockState.MockWS }));
@@ -132,7 +137,13 @@ describe("NodeLinkVoiceReceiver", () => {
     ws.emit("message", buildFrame(3, 0, "guild-1", "user-1", audio), true);
 
     expect(data).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: "user-1", guildId: "guild-1", ssrc: 1000, timestamp: 5000, payload: audio }),
+      expect.objectContaining({
+        userId: "user-1",
+        guildId: "guild-1",
+        ssrc: 1000,
+        timestamp: 5000,
+        payload: audio,
+      }),
     );
   });
 
@@ -148,7 +159,11 @@ describe("NodeLinkVoiceReceiver", () => {
 
     ws.emit(
       "message",
-      JSON.stringify({ op: "speak", type: "endSpeakingEvent", data: { userId: "u", guildId: "g1", data: "c2c2", type: "opus" } }),
+      JSON.stringify({
+        op: "speak",
+        type: "endSpeakingEvent",
+        data: { userId: "u", guildId: "g1", data: "c2c2", type: "opus" },
+      }),
     );
 
     expect(endSpeaking).toHaveBeenCalledWith({ userId: "u", guildId: "g1", data: "c2c2", type: "opus" });
@@ -165,9 +180,12 @@ describe("NodeLinkVoiceReceiver", () => {
     ws.emit("close", 1006, Buffer.from("gone"));
     expect(receiver.connected).toBe(false);
 
-    await vi.waitFor(() => {
-      expect(MockWS.instances.length).toBeGreaterThanOrEqual(2);
-    }, { timeout: 500 });
+    await vi.waitFor(
+      () => {
+        expect(MockWS.instances.length).toBeGreaterThanOrEqual(2);
+      },
+      { timeout: 500 },
+    );
   });
 
   it("does not reconnect after destroy", async () => {

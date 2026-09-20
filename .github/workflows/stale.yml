@@ -1,0 +1,39 @@
+name: Stale
+
+on:
+  schedule:
+    - cron: "42 1 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/stale@v9
+        with:
+          days-before-stale: 45
+          days-before-close: 14
+          stale-issue-label: "stale"
+          stale-pr-label: "stale"
+          exempt-issue-labels: "pinned,security,bug,help wanted"
+          exempt-pr-labels: "pinned,security,work in progress"
+          stale-issue-message: >
+            This issue has been inactive for 45 days and is now marked as stale.
+            Comment or update it within 14 days to keep it open, otherwise it
+            will be closed automatically.
+          stale-pr-message: >
+            This pull request has been inactive for 45 days and is now marked as
+            stale. Push a commit or comment within 14 days to keep it open,
+            otherwise it will be closed automatically.
+          close-issue-message: >
+            Closing this issue after prolonged inactivity. Feel free to reopen
+            if it is still relevant.
+          close-pr-message: >
+            Closing this pull request after prolonged inactivity. Feel free to
+            reopen when you can pick it back up.

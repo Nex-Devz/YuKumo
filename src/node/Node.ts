@@ -5,8 +5,11 @@ import type { NodeConfig, NodeState, NodeStats } from "../types/internal.ts";
 import { EventDispatcher } from "../ws/EventDispatcher.ts";
 import type { EventName, EventCallback } from "../types/internal.ts";
 import { NodeStateCode } from "../types/constants.ts";
+import { YukumoUnsupportedFeatureError } from "../errors/index.ts";
+import { buildCapabilities, type NodeCapabilities, type NodeFeature, type NodeType } from "./capabilities.ts";
 
 export type { NodeState };
+export type { NodeCapabilities, NodeFeature, NodeType };
 
 /**
  * Calculated penalty score metrics for node load balancing.
@@ -38,8 +41,11 @@ export class Node {
     nullPenalty: 0,
   };
   private _playerCount: number = 0;
-  /** null = not yet detected; resolved from config.isNodeLink or /v4/info on ready */
+  /** null = not yet detected; resolved from config.type/isNodeLink or /v4/info on ready */
   private _isNodeLink: boolean | null = null;
+  /** Resolved capabilities; null until the first `ready` completes detection */
+  private _capabilities: NodeCapabilities | null = null;
+  private _version: string | null = null;
   private _maintenance: boolean = false;
 
   private _userId: string;
@@ -47,7 +53,9 @@ export class Node {
   public constructor(config: NodeConfig, userId: string) {
     this.config = config;
     this._userId = userId;
-    this._isNodeLink = config.isNodeLink ?? null;
+    // `type` takes precedence over the legacy `isNodeLink` flag; "auto" defers to detection.
+    const configuredType = config.type ?? (config.isNodeLink === true ? "nodelink" : "auto");
+    this._isNodeLink = configuredType === "nodelink" ? true : configuredType === "lavalink" ? false : null;
     this.events = new EventDispatcher();
 
     this.rest = new RestClient({
@@ -101,18 +109,26 @@ export class Node {
    * too. Reconnects without a resumed session re-send player state via resync.
    */
   private async onSessionReady(config: NodeConfig): Promise<void> {
+    // Resolve type + capabilities once, from /v4/info. When the type was forced
+    // via config we still fetch info to populate the enabled filter/source lists.
+    let info = null;
+    try {
+      info = await this.rest.getInfo();
+    } catch {
+      info = null;
+    }
+
     if (this._isNodeLink === null) {
-      try {
-        const info = await this.rest.getInfo();
-        this._isNodeLink = info?.isNodelink === true;
-      } catch {
-        this._isNodeLink = false;
-      }
-      this.rest.isNodeLink = this._isNodeLink === true;
+      this._isNodeLink = info?.isNodelink === true;
       if (this._isNodeLink) {
         this.events.emit("debug", `Node ${this.id} detected as NodeLink`);
       }
     }
+    this.rest.isNodeLink = this._isNodeLink === true;
+
+    const type: NodeType = this._isNodeLink ? "nodelink" : "lavalink";
+    this._capabilities = buildCapabilities(type, info);
+    this._version = this._capabilities.version;
 
     const wantsResuming = config.resuming === true || config.resumeKey != null;
     if (!wantsResuming || this.ws.sessionId == null) return;
@@ -134,6 +150,57 @@ export class Node {
   /** True when the node was detected (or configured) as NodeLink */
   public get isNodeLink(): boolean {
     return this._isNodeLink === true;
+  }
+
+  /**
+   * Resolved server family. Before the first `ready` completes it reflects the
+   * configured type (or `"lavalink"` when set to auto and not yet detected).
+   */
+  public get type(): NodeType {
+    return this._isNodeLink === true ? "nodelink" : "lavalink";
+  }
+
+  /** Server version string once known (from `/v4/info`), else null. */
+  public get version(): string | null {
+    return this._version;
+  }
+
+  /**
+   * Resolved node capabilities (filters, sources, features). Null until the
+   * first `ready` completes detection.
+   */
+  public get capabilities(): NodeCapabilities | null {
+    return this._capabilities;
+  }
+
+  /** Enabled source manager names reported by the node (empty before ready). */
+  public get sourceManagers(): readonly string[] {
+    return this._capabilities != null ? [...this._capabilities.sourceManagers] : [];
+  }
+
+  /**
+   * Whether the node supports a high-level feature. Before capabilities are
+   * resolved, NodeLink-only features fall back to the configured/detected type
+   * so a forced-type node behaves correctly even before its first `ready`.
+   */
+  public supports(feature: NodeFeature): boolean {
+    // Use resolved capabilities once available; otherwise fall back to a
+    // type-derived capability set so a forced-type node answers correctly.
+    const caps = this._capabilities ?? buildCapabilities(this.type, null);
+    return caps.features.has(feature);
+  }
+
+  /** Whether a specific audio filter is available on this node. */
+  public supportsFilter(name: string): boolean {
+    const caps = this._capabilities ?? buildCapabilities(this.type, null);
+    return caps.filters.has(name);
+  }
+
+  /** Throws {@link YukumoUnsupportedFeatureError} when the feature is unavailable. */
+  public assertSupports(feature: NodeFeature): void {
+    if (!this.supports(feature)) {
+      throw new YukumoUnsupportedFeatureError(feature, this.id, this.type);
+    }
   }
 
   /** True while the node is in maintenance mode (drained, no new players) */
@@ -171,7 +238,11 @@ export class Node {
           resolve();
         } else if (timeoutMs > 0 && Date.now() - startedAt >= timeoutMs) {
           clearInterval(timer);
-          reject(new Error(`Node ${this.id} did not drain within ${timeoutMs}ms (${this._playerCount} players left)`));
+          reject(
+            new Error(
+              `Node ${this.id} did not drain within ${timeoutMs}ms (${this._playerCount} players left)`,
+            ),
+          );
         }
       }, pollMs);
       (timer as { unref?: () => void }).unref?.();

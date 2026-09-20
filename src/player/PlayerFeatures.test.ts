@@ -260,3 +260,31 @@ describe("player.get(start, end)", () => {
     expect(player.get(-3, 1)).toHaveLength(1);
   });
 });
+
+describe("cross-family failover drops unsupported filters", () => {
+  it("drops NodeLink-only filters when moving onto a Lavalink node", async () => {
+    // Start on a NodeLink node with an echo filter applied.
+    const nlNode = new Node({ host: "h", port: 1, password: "p", name: "nl", type: "nodelink" }, "123456");
+    Object.defineProperty(nlNode.ws, "eventDispatcher", {
+      value: { on: vi.fn(), off: vi.fn(), emit: vi.fn() },
+      configurable: true,
+    });
+    Object.defineProperty(nlNode.rest, "sessionId", {
+      value: "s",
+      writable: true,
+      configurable: true,
+    });
+    nlNode.rest.updatePlayer = vi.fn().mockResolvedValue({});
+
+    const player = createPlayer(nlNode);
+    await player.setEcho({ delay: 200, feedback: 0.4 });
+    expect(player.filters.has("echo")).toBe(true);
+
+    // Move to a plain Lavalink node — echo isn't supported there and must be
+    // dropped. createMockNode has no NodeLink flag, so its type is "lavalink".
+    const llNode = createMockNode("ll-target");
+    await player.setNode(llNode);
+
+    expect(player.filters.has("echo")).toBe(false);
+  });
+});

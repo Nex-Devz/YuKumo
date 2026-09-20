@@ -16,7 +16,7 @@
 - [ ] Self-reviewed the code
 - [ ] Added/updated tests
 - [ ] Added/updated JSDoc documentation
-- [ ] Changes build cleanly (`bun run build`)
-- [ ] Tests pass (`bun run test`)
-- [ ] TypeScript compiles (`bun run typecheck`)
-- [ ] Lint passes (`bun run lint`)
+- [ ] Changes build cleanly (`npm run build`)
+- [ ] Tests pass (`npm test`)
+- [ ] TypeScript compiles (`npm run typecheck`)
+- [ ] Lint passes (`npm run lint`)
