@@ -54,7 +54,7 @@ jobs:
 
       - name: Upload build distribution artifacts
         if: matrix.node-version == '22.x'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: yukumo-dist
           path: dist/
@@ -62,7 +62,7 @@ jobs:
 
       - name: Upload test failure diagnostic report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: test-failure-node-${{ matrix.node-version }}
           path: |
