@@ -167,6 +167,7 @@ export class Queue<T> {
     const [removed] = this.tracks.splice(removeIndex, 1) as [T];
 
     if (this.currentIndex === removeIndex) {
+      this._detachedCurrent = removed;
       this.currentIndex = -1;
     } else if (this.currentIndex > removeIndex) {
       this.currentIndex--;

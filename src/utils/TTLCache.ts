@@ -1,15 +1,47 @@
 /**
- * Map with per-entry TTL. Entries expire lazily on access — no timers are
- * held, so the cache never keeps the process alive.
+ * Map with per-entry TTL. Entries expire lazily on access or automatically
+ * through bounded size sweeps.
  */
 export class TTLCache<K = string, V = unknown> {
   private readonly store = new Map<K, { value: V; expiresAt: number | null }>();
+  public readonly maxSize: number;
+
+  public constructor(maxSize: number = 1000) {
+    this.maxSize = maxSize > 0 ? maxSize : 1000;
+  }
+
+  /**
+   * Sweeps all expired entries from the cache.
+   * Returns the number of removed entries.
+   */
+  public sweep(): number {
+    const now = Date.now();
+    let removed = 0;
+    for (const [key, entry] of this.store) {
+      if (entry.expiresAt != null && now > entry.expiresAt) {
+        this.store.delete(key);
+        removed++;
+      }
+    }
+    return removed;
+  }
 
   /**
    * Stores a value. With `ttlMs`, the entry auto-expires after that many
    * milliseconds; without it, the entry lives until deleted.
    */
   public set(key: K, value: V, ttlMs?: number): this {
+    if (this.store.size >= this.maxSize && !this.store.has(key)) {
+      this.sweep();
+      if (this.store.size >= this.maxSize) {
+        // Evict the oldest inserted key
+        const oldest = this.store.keys().next().value;
+        if (oldest !== undefined) {
+          this.store.delete(oldest);
+        }
+      }
+    }
+
     this.store.set(key, {
       value,
       expiresAt: ttlMs != null && ttlMs > 0 ? Date.now() + ttlMs : null,
@@ -45,12 +77,7 @@ export class TTLCache<K = string, V = unknown> {
 
   /** Number of live (non-expired) entries; sweeps expired ones as a side effect */
   public get size(): number {
-    const now = Date.now();
-    for (const [key, entry] of this.store) {
-      if (entry.expiresAt != null && now > entry.expiresAt) {
-        this.store.delete(key);
-      }
-    }
+    this.sweep();
     return this.store.size;
   }
 }

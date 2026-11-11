@@ -650,7 +650,7 @@ export class YuKumo {
    */
   public async createPlayer(options: YuKumoPlayerCreateOptions): Promise<Player> {
     const existing = this.players.get(options.guildId);
-    if (existing != null) return existing;
+    if (existing != null && !existing.destroyed) return existing;
 
     // Concurrent calls for the same guild await the same in-flight creation instead of
     // racing past the existence check (which would duplicate events and listeners)

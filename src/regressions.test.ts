@@ -371,5 +371,57 @@ describe("bug regressions", () => {
       const selected = (k.nodes as any).selector;
       expect(selected).toBe(customSelector);
     });
+
+    it("bounds TTLCache size and evicts on capacity", () => {
+      const { TTLCache } = require("./utils/TTLCache.ts");
+      const cache = new TTLCache(3);
+      cache.set("a", 1, 10);
+      cache.set("b", 2);
+      cache.set("c", 3);
+      expect(cache.size).toBe(3);
+
+      // Adding 4th item when capacity is 3: sweeps expired or evicts oldest
+      cache.set("d", 4);
+      expect(cache.size).toBeLessThanOrEqual(3);
+      expect(cache.has("d")).toBe(true);
+    });
+
+    it("retains detached track in queue.currentTrack when dequeueing active track", () => {
+      const { Queue } = require("./queue/Queue.ts");
+      const q = new Queue();
+      const t1 = makeTrack("track-1");
+      const t2 = makeTrack("track-2");
+      q.enqueue(t1);
+      q.enqueue(t2);
+      q.start();
+
+      expect(q.currentTrack?.info.identifier).toBe("track-1");
+
+      const removed = q.dequeue(0);
+      expect(removed?.info.identifier).toBe("track-1");
+      // Must not be null or shifted abruptly while audio is still playing
+      expect(q.currentTrack?.info.identifier).toBe("track-1");
+
+      // Once next is called, detached track moves to history and advances
+      const nextTrack = q.next();
+      expect(nextTrack?.info.identifier).toBe("track-2");
+      expect(q.history[0]?.info.identifier).toBe("track-1");
+    });
+
+    it("createPlayer replaces destroyed player instead of returning dead husk", async () => {
+      const k = new YuKumo({ nodes: nodeConfigs });
+      const n = k.nodes.get("main")!;
+      silenceWs(n);
+      n.rest.destroyPlayer = vi.fn().mockResolvedValue(undefined);
+      const player1 = await k.createPlayer({ guildId: "husk-guild", voiceChannelId: "vc-1" });
+      player1.setVoiceState({ sessionId: "s1", channelId: "vc-1", endpoint: "wss://ep", token: "tok" });
+      await player1.destroy();
+      expect(player1.destroyed).toBe(true);
+
+      // Re-creating player for same guild should return a new, non-destroyed instance
+      const player2 = await k.createPlayer({ guildId: "husk-guild", voiceChannelId: "vc-1" });
+      expect(player2).not.toBe(player1);
+      expect(player2.destroyed).toBe(false);
+    });
   });
 });
