@@ -70,7 +70,12 @@ export class NodeManager {
   public async destroyAll(): Promise<void> {
     const nodes = this.getAll();
     this.nodes.clear();
-    await Promise.all(nodes.map((n) => n.close()));
+    await Promise.all(
+      nodes.map(async (n) => {
+        await n.close();
+        n.destroy();
+      }),
+    );
   }
 
   /**

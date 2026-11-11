@@ -423,5 +423,76 @@ describe("bug regressions", () => {
       expect(player2).not.toBe(player1);
       expect(player2.destroyed).toBe(false);
     });
+
+    it("NodeManager.destroyAll calls destroy on each node", async () => {
+      const { NodeManager } = require("./node/NodeManager.ts");
+      const mgr = new NodeManager("user-1");
+      const n1 = mgr.add({ host: "localhost", port: 2333, password: "youshallnotpass", name: "n1" });
+      const n2 = mgr.add({ host: "localhost", port: 2334, password: "youshallnotpass", name: "n2" });
+
+      const d1Spy = vi.spyOn(n1, "destroy");
+      const d2Spy = vi.spyOn(n2, "destroy");
+      const c1Spy = vi.spyOn(n1, "close").mockResolvedValue(undefined as never);
+      const c2Spy = vi.spyOn(n2, "close").mockResolvedValue(undefined as never);
+
+      await mgr.destroyAll();
+
+      expect(c1Spy).toHaveBeenCalled();
+      expect(c2Spy).toHaveBeenCalled();
+      expect(d1Spy).toHaveBeenCalled();
+      expect(d2Spy).toHaveBeenCalled();
+      expect(mgr.getAll().length).toBe(0);
+    });
+
+    it("Queue supports add(tracks[]), enqueueMany, and computes duration", () => {
+      const { Queue } = require("./queue/Queue.ts");
+      const q = new Queue();
+      const t1 = { ...makeTrack("t1"), info: { ...makeTrack("t1").info, length: 30000 } };
+      const t2 = { ...makeTrack("t2"), info: { ...makeTrack("t2").info, length: 45000 } };
+      const t3 = { ...makeTrack("t3"), info: { ...makeTrack("t3").info, length: 15000 } };
+
+      let changedCount = 0;
+      q.onChanged = () => changedCount++;
+
+      // Batch add
+      q.add([t1, t2]);
+      expect(q.size).toBe(2);
+      expect(changedCount).toBe(1);
+
+      // enqueueMany
+      q.enqueueMany([t3]);
+      expect(q.size).toBe(3);
+      expect(changedCount).toBe(2);
+
+      // Total duration
+      expect(q.duration).toBe(90000);
+    });
+
+    it("Player.restart seeks to 0", async () => {
+      const player = kumo.players.create({ guildId: "restart-guild", node, voiceChannelId: "vc-1" });
+      player.seek = vi.fn().mockResolvedValue(undefined);
+      player.queue.add(makeTrack("now-playing"));
+      player.queue.start();
+
+      await player.restart();
+      expect(player.seek).toHaveBeenCalledWith(0);
+    });
+
+    it("EventDispatcher supports EventEmitter aliases", () => {
+      const { EventDispatcher } = require("./ws/EventDispatcher.ts");
+      const d = new EventDispatcher();
+      const fn = vi.fn();
+
+      d.addListener("nodeConnect", fn);
+      expect(d.listenerCount("nodeConnect")).toBe(1);
+      expect(d.eventNames()).toContain("nodeConnect");
+      expect(d.listeners("nodeConnect")).toEqual([fn]);
+
+      d.setMaxListeners(20);
+      expect(d.getMaxListeners()).toBe(20);
+
+      d.removeListener("nodeConnect", fn);
+      expect(d.listenerCount("nodeConnect")).toBe(0);
+    });
   });
 });

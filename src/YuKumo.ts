@@ -978,6 +978,11 @@ export class YuKumo {
     return this;
   }
 
+  /** Alias for on (standard EventEmitter interface) */
+  public addListener<E extends EventName>(event: E, callback: EventCallback<E>): this {
+    return this.on(event, callback);
+  }
+
   /** Subscribes to a global client event for a single emission */
   public once<E extends EventName>(event: E, callback: EventCallback<E>): this {
     this.events.once(event, callback);
@@ -988,6 +993,11 @@ export class YuKumo {
   public off<E extends EventName>(event: E, callback?: EventCallback<E>): this {
     this.events.off(event, callback);
     return this;
+  }
+
+  /** Alias for off (standard EventEmitter interface) */
+  public removeListener<E extends EventName>(event: E, callback?: EventCallback<E>): this {
+    return this.off(event, callback);
   }
 
   private registerNodes(configs: NodeConfig[], httpHeaders?: Record<string, string>): void {

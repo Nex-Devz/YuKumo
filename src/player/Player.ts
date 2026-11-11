@@ -1525,6 +1525,15 @@ export class Player<TTrack extends TrackData = TrackData> {
   }
 
   /**
+   * Restarts playback of the current track from 0ms.
+   */
+  public async restart(): Promise<void> {
+    if (this._destroyed) throw new PlayerError("Player is destroyed", this.guildId);
+    if (this.currentTrack == null && this.queue.currentTrack == null) return;
+    await this.seek(0);
+  }
+
+  /**
    * Applies current filter chain (or the given FilterChain / raw Lavalink
    * filters object) to the node in real time.
    */

@@ -68,6 +68,25 @@ export class Queue<T> {
     return this.tracks.length;
   }
 
+  /**
+   * Total duration in milliseconds of all tracks currently in the queue
+   * (including detached current track if present).
+   */
+  public get duration(): number {
+    let total = 0;
+    for (const track of this.tracks) {
+      const len = (track as { info?: { length?: number } })?.info?.length;
+      if (typeof len === "number" && Number.isFinite(len) && len > 0) {
+        total += len;
+      }
+    }
+    const detachedLen = (this._detachedCurrent as { info?: { length?: number } } | null)?.info?.length;
+    if (typeof detachedLen === "number" && Number.isFinite(detachedLen) && detachedLen > 0) {
+      total += detachedLen;
+    }
+    return total;
+  }
+
   /** Checks whether the queue is empty */
   public get isEmpty(): boolean {
     return this.tracks.length === 0;
@@ -139,6 +158,33 @@ export class Queue<T> {
       }
     } else {
       this.tracks.push(track);
+    }
+
+    this.notifyChange();
+    return this;
+  }
+
+  /**
+   * Enqueues multiple tracks in a single operation, triggering a single notifyChange.
+   */
+  public enqueueMany(tracks: T[], index?: number): this {
+    if (!Array.isArray(tracks) || tracks.length === 0) return this;
+
+    if (this.maxSize > 0 && this.tracks.length + tracks.length > this.maxSize) {
+      throw new QueueFullError(this.maxSize);
+    }
+
+    if (index !== undefined && (index < 0 || index > this.tracks.length)) {
+      throw new QueueError(`Index ${index} is out of bounds`);
+    }
+
+    if (index !== undefined) {
+      this.tracks.splice(index, 0, ...tracks);
+      if (this.currentIndex >= index) {
+        this.currentIndex += tracks.length;
+      }
+    } else {
+      this.tracks.push(...tracks);
     }
 
     this.notifyChange();
@@ -404,9 +450,12 @@ export class Queue<T> {
     return this.remove(start, count);
   }
 
-  /** Alias for enqueue — matches common collection naming */
-  public add(track: T, index?: number): this {
-    return this.enqueue(track, index);
+  /** Alias for enqueue / enqueueMany — accepts either a single track or an array of tracks */
+  public add(trackOrTracks: T | T[], index?: number): this {
+    if (Array.isArray(trackOrTracks)) {
+      return this.enqueueMany(trackOrTracks, index);
+    }
+    return this.enqueue(trackOrTracks, index);
   }
 
   /** Alias for priorityEnqueue — inserts at front of queue */
