@@ -1,4 +1,4 @@
-import { YuKumo } from "../Kumo.ts";
+import { YuKumo } from "../YuKumo.ts";
 
 /**
  * Exporter generating standard Prometheus metrics string for Yukumo nodes and players.

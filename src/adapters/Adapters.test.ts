@@ -5,7 +5,7 @@ import { RawGatewayAdapter } from "./RawGatewayAdapter.ts";
 import { DaveyAdapter } from "./DaveyAdapter.ts";
 import { DiscordenoAdapter } from "./DiscordenoAdapter.ts";
 import { SeyfertAdapter } from "./SeyfertAdapter.ts";
-import { YuKumo } from "../Kumo.ts";
+import { YuKumo } from "../YuKumo.ts";
 
 describe("Discord Adapters", () => {
   it("DiscordJSAdapter should handle voice events and send voice state updates", () => {

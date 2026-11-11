@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { YuKumo } from "./Kumo.ts";
+import { YuKumo } from "./YuKumo.ts";
 import { MemoryStorage } from "./storage/MemoryStorage.ts";
 import type { PlayerJson } from "./player/Player.ts";
 import type { TrackData } from "./types/protocol.ts";

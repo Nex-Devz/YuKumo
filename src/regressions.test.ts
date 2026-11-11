@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { YuKumo } from "./Kumo.ts";
+import { YuKumo } from "./YuKumo.ts";
 import type { NodeConfig, VoiceStateUpdate } from "./types/internal.ts";
 import type { TrackData } from "./types/protocol.ts";
 import { DestroyReasons } from "./types/constants.ts";

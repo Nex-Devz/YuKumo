@@ -6,7 +6,7 @@ import { VolumeFilter } from "../filters/Filters.ts";
 import { EventDispatcher } from "../ws/EventDispatcher.ts";
 import { MemoryStorage } from "../storage/MemoryStorage.ts";
 import { DestroyReasons } from "../types/constants.ts";
-import type { YuKumo } from "../Kumo.ts";
+import type { YuKumo } from "../YuKumo.ts";
 import type { TrackData } from "../types/protocol.ts";
 
 function createMockNode(name = "test-node"): Node {

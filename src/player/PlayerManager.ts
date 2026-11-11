@@ -1,6 +1,6 @@
 import { Player } from "./Player.ts";
 import type { PlayerOptions, PlayerStatus } from "./Player.ts";
-import type { YuKumo } from "../Kumo.ts";
+import type { YuKumo } from "../YuKumo.ts";
 
 /** Criteria for PlayerManager.find/findOne — all fields optional, AND-combined */
 export interface PlayerFindCriteria {

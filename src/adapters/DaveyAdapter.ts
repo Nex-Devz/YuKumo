@@ -1,4 +1,4 @@
-import type { YuKumo } from "../Kumo.ts";
+import type { YuKumo } from "../YuKumo.ts";
 import { isVoicePacket, type RawGatewayPacket } from "./RawGatewayAdapter.ts";
 
 /**

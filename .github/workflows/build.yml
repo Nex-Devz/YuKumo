@@ -93,3 +93,6 @@ jobs:
 
       - name: Build package distribution
         run: bun run build
+
+      - name: Run performance benchmarks
+        run: bun run bench

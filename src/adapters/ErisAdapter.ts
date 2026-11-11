@@ -1,4 +1,4 @@
-import type { YuKumo } from "../Kumo.ts";
+import type { YuKumo } from "../YuKumo.ts";
 import { isVoicePacket } from "./RawGatewayAdapter.ts";
 
 export interface MinimalErisClient {
@@ -30,7 +30,7 @@ export class ErisAdapter {
 
     if (packet.t === "VOICE_STATE_UPDATE") {
       const d = packet.d;
-      // Identity (bot vs member) is enforced once, in Kumo.handleVoiceStateUpdate.
+      // Identity (bot vs member) is enforced once, in YuKumo.handleVoiceStateUpdate.
       void this.kumo
         .handleVoiceStateUpdate({
           guildId: String(d.guild_id ?? ""),

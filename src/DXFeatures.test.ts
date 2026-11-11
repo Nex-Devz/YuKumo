@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { YuKumo } from "./Kumo.ts";
+import { YuKumo } from "./YuKumo.ts";
 import { Queue } from "./queue/Queue.ts";
 import { TTLCache } from "./utils/TTLCache.ts";
 import type { TrackData } from "./types/protocol.ts";

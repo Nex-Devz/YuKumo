@@ -66,7 +66,7 @@ import { TTLCache } from "../utils/TTLCache.ts";
 import type { EventName, EventCallback } from "../types/internal.ts";
 import { DestroyReasons } from "../types/constants.ts";
 
-import type { YuKumo } from "../Kumo.ts";
+import type { YuKumo } from "../YuKumo.ts";
 import type { SearchResult } from "../types/internal.ts";
 
 export type PlayerStatus = "idle" | "playing" | "paused" | "destroyed";

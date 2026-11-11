@@ -1,4 +1,4 @@
-import { YuKumo } from "../Kumo.ts";
+import { YuKumo } from "../YuKumo.ts";
 import { isVoicePacket } from "./RawGatewayAdapter.ts";
 
 /** The minimal Seyfert client surface Yukumo drives. */

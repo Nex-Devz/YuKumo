@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { PrometheusExporter } from "./PrometheusExporter.ts";
-import { YuKumo } from "../Kumo.ts";
+import { YuKumo } from "../YuKumo.ts";
 import { Queue } from "../queue/Queue.ts";
 import { SeyfertAdapter } from "../adapters/SeyfertAdapter.ts";
 import { OceanicAdapter } from "../adapters/OceanicAdapter.ts";

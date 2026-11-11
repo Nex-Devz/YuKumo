@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { Queue } from "./queue/Queue.ts";
 import { FilterChain, AudioOutputs } from "./filters/FilterChain.ts";
 import { parseLavalinkConnUrl } from "./utils/index.ts";
-import { YuKumo } from "./Kumo.ts";
+import { YuKumo } from "./YuKumo.ts";
 import { Track } from "./tracks/Track.ts";
 import type { NodeConfig } from "./types/internal.ts";
 

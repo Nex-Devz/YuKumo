@@ -18,10 +18,10 @@ const LAVALINK_PORT = Number(process.env.LAVALINK_PORT ?? 2333);
 const LAVALINK_PASS = process.env.LAVALINK_PASS ?? "youshallnotpass";
 
 describe("integration", () => {
-  let YuKumo: YuKumo;
+  let yukumo: YuKumo;
 
   beforeAll(async () => {
-    YuKumo = new YuKumo({
+    yukumo = new YuKumo({
       nodes: [
         {
           host: LAVALINK_HOST,
@@ -32,28 +32,28 @@ describe("integration", () => {
       ],
     });
 
-    await YuKumo.init();
+    await yukumo.init();
   }, 30000);
 
   afterAll(async () => {
-    await YuKumo.destroy();
+    await yukumo.destroy();
   });
 
   it("should connect to Lavalink node", () => {
-    const node = YuKumo.getNode("integration-node");
+    const node = yukumo.getNode("integration-node");
     expect(node).toBeDefined();
     expect(node!.state).toBe("connected");
   });
 
   it("should retrieve Lavalink server info", async () => {
-    const node = YuKumo.getNode("integration-node")!;
+    const node = yukumo.getNode("integration-node")!;
     const info = await node.rest.getInfo();
     expect(info).toBeDefined();
     expect(info.version).toBeDefined();
   });
 
   it("should search for tracks via HTTP source", async () => {
-    const result = await YuKumo.search(
+    const result = await yukumo.search(
       "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
     );
     expect(result.loadType).toBe("track");
@@ -62,7 +62,7 @@ describe("integration", () => {
   });
 
   it("should handle empty search gracefully", async () => {
-    const result = await YuKumo.search({
+    const result = await yukumo.search({
       query: "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
     });
     expect(result.loadType).toBe("empty");
@@ -70,8 +70,8 @@ describe("integration", () => {
   });
 
   it("should decode a track", async () => {
-    const node = YuKumo.getNode("integration-node")!;
-    const result = await YuKumo.search(
+    const node = yukumo.getNode("integration-node")!;
+    const result = await yukumo.search(
       "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
     );
     expect(result.tracks.length).toBeGreaterThan(0);
@@ -81,7 +81,7 @@ describe("integration", () => {
   });
 
   it("should retrieve server stats", async () => {
-    const node = YuKumo.getNode("integration-node")!;
+    const node = yukumo.getNode("integration-node")!;
     const stats = await node.rest.getStats();
     expect(stats).toBeDefined();
   });

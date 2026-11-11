@@ -48,7 +48,7 @@ flowchart TD
     end
 
     subgraph CoreEngine ["YuKumo Client Engine"]
-        Mgr["YuKumo Manager (Kumo.ts)"]
+        Mgr["YuKumo Manager (YuKumo.ts)"]
         VST["VoiceStateTracker"]
         NManager["NodeManager & Health Monitor"]
         PManager["PlayerManager"]
