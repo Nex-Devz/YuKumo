@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120" fill="none">
+  <defs>
+    <linearGradient id="yk-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="50%" stop-color="#6366F1"/>
+      <stop offset="100%" stop-color="#A855F7"/>
+    </linearGradient>
+    <linearGradient id="yk-glow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38BDF8" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#A855F7" stop-opacity="0.1"/>
+    </linearGradient>
+  </defs>
+  <rect width="120" height="120" rx="28" fill="#0B0F19"/>
+  <rect x="2" y="2" width="116" height="116" rx="26" stroke="url(#yk-grad)" stroke-width="1.5" stroke-opacity="0.4"/>
+  <circle cx="60" cy="60" r="46" fill="url(#yk-glow)" filter="blur(14px)"/>
+  
+  <!-- Cloud body & audio waveform paths -->
+  <path d="M42 74 C34 74 28 68 28 60 C28 53 33 47.5 40 46.5 C43 37 51 30 61 30 C72 30 81 37.5 83 48 C89 49 94 54 94 60 C94 68 87 74 79 74 Z" 
+        stroke="url(#yk-grad)" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  
+  <!-- Audio spectrum bars embedded in cloud core -->
+  <line x1="48" y1="62" x2="48" y2="54" stroke="#38BDF8" stroke-width="3.5" stroke-linecap="round"/>
+  <line x1="56" y1="65" x2="56" y2="47" stroke="#6366F1" stroke-width="3.5" stroke-linecap="round"/>
+  <line x1="64" y1="67" x2="64" y2="43" stroke="#818CF8" stroke-width="3.5" stroke-linecap="round"/>
+  <line x1="72" y1="65" x2="72" y2="50" stroke="#A855F7" stroke-width="3.5" stroke-linecap="round"/>
+</svg>

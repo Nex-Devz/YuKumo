@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 380" width="1280" height="380" fill="none">
+  <defs>
+    <linearGradient id="bg-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#080B11"/>
+      <stop offset="50%" stop-color="#0D1322"/>
+      <stop offset="100%" stop-color="#070A10"/>
+    </linearGradient>
+    <linearGradient id="primary-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="50%" stop-color="#818CF8"/>
+      <stop offset="100%" stop-color="#C084FC"/>
+    </linearGradient>
+    <linearGradient id="border-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38BDF8" stop-opacity="0.3"/>
+      <stop offset="50%" stop-color="#6366F1" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#A855F7" stop-opacity="0.3"/>
+    </linearGradient>
+    <radialGradient id="mesh-glow" cx="50%" cy="40%" r="55%">
+      <stop offset="0%" stop-color="#6366F1" stop-opacity="0.18"/>
+      <stop offset="60%" stop-color="#38BDF8" stop-opacity="0.06"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="dot-grid" x="0" y="0" width="32" height="32" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1" fill="#FFFFFF" fill-opacity="0.04"/>
+    </pattern>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1280" height="380" fill="url(#bg-grad)"/>
+  <rect width="1280" height="380" fill="url(#dot-grid)"/>
+  <rect width="1280" height="380" fill="url(#mesh-glow)"/>
+  <rect x="1" y="1" width="1278" height="378" rx="1" stroke="url(#border-grad)" stroke-width="1"/>
+
+  <!-- Waveform decorative background line -->
+  <path d="M 0 260 Q 160 220 320 270 T 640 250 T 960 270 T 1280 230" stroke="url(#primary-grad)" stroke-width="1.5" stroke-opacity="0.15" fill="none"/>
+  <path d="M 0 290 Q 200 320 400 280 T 800 290 T 1200 270 T 1280 280" stroke="url(#primary-grad)" stroke-width="1" stroke-opacity="0.08" fill="none"/>
+
+  <!-- Center Logo Emblem -->
+  <g transform="translate(580, 50)">
+    <rect width="120" height="120" rx="28" fill="#111827" stroke="url(#primary-grad)" stroke-width="2" stroke-opacity="0.7"/>
+    <circle cx="60" cy="60" r="42" fill="#6366F1" fill-opacity="0.15"/>
+    <!-- Cloud & Waves -->
+    <path d="M42 74 C34 74 28 68 28 60 C28 53 33 47.5 40 46.5 C43 37 51 30 61 30 C72 30 81 37.5 83 48 C89 49 94 54 94 60 C94 68 87 74 79 74 Z" 
+          stroke="url(#primary-grad)" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    <line x1="48" y1="62" x2="48" y2="54" stroke="#38BDF8" stroke-width="3.5" stroke-linecap="round"/>
+    <line x1="56" y1="65" x2="56" y2="47" stroke="#818CF8" stroke-width="3.5" stroke-linecap="round"/>
+    <line x1="64" y1="67" x2="64" y2="43" stroke="#A855F7" stroke-width="3.5" stroke-linecap="round"/>
+    <line x1="72" y1="65" x2="72" y2="50" stroke="#C084FC" stroke-width="3.5" stroke-linecap="round"/>
+  </g>
+
+  <!-- Title -->
+  <text x="640" y="222" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', sans-serif" font-weight="800" font-size="44" letter-spacing="-0.02em" fill="url(#primary-grad)">YuKumo</text>
+
+  <!-- Subtitle -->
+  <text x="640" y="260" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', sans-serif" font-weight="400" font-size="17" fill="#94A3B8" letter-spacing="0.01em">
+    Production-grade, framework-agnostic Lavalink v4 and NodeLink client for Node.js and Bun
+  </text>
+
+  <!-- Feature Pills -->
+  <g transform="translate(640, 312)" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'JetBrains Mono', monospace" font-size="12" font-weight="500">
+    <!-- Background capsules -->
+    <rect x="-420" y="-14" width="150" height="28" rx="14" fill="#1E293B" fill-opacity="0.7" stroke="#334155" stroke-width="1"/>
+    <text x="-345" y="4" fill="#38BDF8">Lavalink v4 &amp; NodeLink</text>
+
+    <rect x="-250" y="-14" width="150" height="28" rx="14" fill="#1E293B" fill-opacity="0.7" stroke="#334155" stroke-width="1"/>
+    <text x="-175" y="4" fill="#818CF8">Zero-Restart Resuming</text>
+
+    <rect x="-80" y="-14" width="160" height="28" rx="14" fill="#1E293B" fill-opacity="0.7" stroke="#334155" stroke-width="1"/>
+    <text x="0" y="4" fill="#A855F7">Offline Track Encoding</text>
+
+    <rect x="100" y="-14" width="150" height="28" rx="14" fill="#1E293B" fill-opacity="0.7" stroke="#334155" stroke-width="1"/>
+    <text x="175" y="4" fill="#38BDF8">Multi-Node Failover</text>
+
+    <rect x="270" y="-14" width="150" height="28" rx="14" fill="#1E293B" fill-opacity="0.7" stroke="#334155" stroke-width="1"/>
+    <text x="345" y="4" fill="#818CF8">Strict TypeScript</text>
+  </g>
+</svg>

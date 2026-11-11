@@ -8,11 +8,12 @@ updates:
     open-pull-requests-limit: 10
     labels:
       - "dependencies"
+      - "javascript"
     commit-message:
-      prefix: "chore"
+      prefix: "chore(deps)"
       include: "scope"
     groups:
-      dev-dependencies:
+      development-dependencies:
         dependency-type: "development"
 
   - package-ecosystem: "github-actions"
@@ -20,8 +21,9 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    open-pull-requests-limit: 10
     labels:
       - "dependencies"
-      - "github-actions"
+      - "ci"
     commit-message:
-      prefix: "ci"
+      prefix: "chore(ci)"
