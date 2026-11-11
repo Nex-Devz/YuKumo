@@ -1347,6 +1347,13 @@ export class Player<TTrack extends TrackData = TrackData> {
   public async playTrack(track: TTrack, options?: PlayOptions): Promise<void> {
     if (this._destroyed) throw new PlayerError("Player is destroyed", this.guildId);
 
+    if (this.kumo?.middleware != null) {
+      const allowed = await this.kumo.middleware.runBeforeTrackStart(this.guildId, track as TrackData);
+      if (!allowed) {
+        return;
+      }
+    }
+
     const filterPayload = this.filters.toPayload();
     const hasFilterKeys = Object.keys(filterPayload).length > 0;
 

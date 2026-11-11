@@ -38,6 +38,8 @@ export interface NodeConfig {
   heartbeatIntervalMs?: number;
   /** Time to wait for a pong before declaring the connection dead (default 10000) */
   heartbeatTimeoutMs?: number;
+  /** Custom client name sent in WS handshake and REST requests (default "YuKumo/1.9.0") */
+  clientName?: string;
 }
 
 export interface NodeStats {
@@ -165,6 +167,8 @@ export interface ManagerOptions {
     /** Enable autoplay on every created player (source-aware recommendations when the queue ends) */
     autoplay?: boolean;
   };
+  /** Custom client name sent in WS handshake and REST requests (default "YuKumo/1.9.0") */
+  clientName?: string;
 }
 
 export type RepeatMode = "none" | "track" | "queue";

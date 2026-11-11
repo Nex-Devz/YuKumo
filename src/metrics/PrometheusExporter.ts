@@ -18,7 +18,7 @@ export class PrometheusExporter {
 
     lines.push("# HELP yukumo_connected_nodes Total connected Lavalink nodes");
     lines.push("# TYPE yukumo_connected_nodes gauge");
-    lines.push(`yukumo_connected_nodes ${this.kumo.nodes.size()}`);
+    lines.push(`yukumo_connected_nodes ${this.kumo.nodes.getConnected().length}`);
 
     lines.push("# HELP yukumo_active_players Total active audio players");
     lines.push("# TYPE yukumo_active_players gauge");

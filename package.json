@@ -51,8 +51,8 @@
   "scripts": {
     "build": "tsup",
     "build:check": "tsc --noEmit",
-    "lint": "eslint src/ --ext .ts",
-    "lint:fix": "eslint src/ --ext .ts --fix",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
     "format": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",
     "test": "vitest run",

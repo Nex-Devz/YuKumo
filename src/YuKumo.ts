@@ -6,6 +6,7 @@ import { EventDispatcher } from "./ws/EventDispatcher.ts";
 import { MemoryStorage } from "./storage/MemoryStorage.ts";
 import { VoiceStateTracker } from "./voice/VoiceStateTracker.ts";
 import { SearchCache } from "./utils/SearchCache.ts";
+import { MiddlewareRegistry } from "./utils/Middleware.ts";
 import { levelFilteredLogger, NoopLogger, type Logger } from "./utils/Logger.ts";
 import { PluginError } from "./errors/index.ts";
 import type { Node } from "./node/Node.ts";
@@ -159,6 +160,7 @@ export class YuKumo {
   public readonly storage: StorageAdapter;
   public readonly voice: VoiceStateTracker;
   public readonly searchCache: SearchCache;
+  public readonly middleware = new MiddlewareRegistry();
   public defaultSearchSource: string;
   /** Disconnect behavior configuration (see ManagerOptions.onDisconnect) */
   private readonly onDisconnect: { destroyPlayer: boolean; autoReconnect: boolean };
@@ -248,7 +250,7 @@ export class YuKumo {
       );
     };
 
-    this.registerNodes(options.nodes, options.httpHeaders);
+    this.registerNodes(options.nodes, options.httpHeaders, options.clientName);
     this.registerPlugins(options.plugins);
 
     if (this.resuming.enabled && this.resuming.persistPlayers) {
@@ -728,6 +730,9 @@ export class YuKumo {
     const player = this.players.get(guildId);
     if (player == null) throw new Error(`No player found for guild ${guildId}`);
 
+    const allowed = await this.middleware.runBeforeTrackStart(guildId, track);
+    if (!allowed) return;
+
     const hookResult = await this.plugins.runBeforePlay(guildId, track);
     if (hookResult === null) return;
 
@@ -1000,10 +1005,13 @@ export class YuKumo {
     return this.off(event, callback);
   }
 
-  private registerNodes(configs: NodeConfig[], httpHeaders?: Record<string, string>): void {
+  private registerNodes(configs: NodeConfig[], httpHeaders?: Record<string, string>, clientName?: string): void {
     for (const config of configs) {
       let merged =
         httpHeaders != null ? { ...config, httpHeaders: { ...httpHeaders, ...config.httpHeaders } } : config;
+      if (clientName != null && merged.clientName == null) {
+        merged = { ...merged, clientName };
+      }
       // Manager-level resuming turns it on for every node (NodeLink nodes skip it themselves)
       if (this.resuming.enabled) {
         merged = {

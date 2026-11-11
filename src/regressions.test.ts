@@ -4,6 +4,13 @@ import type { NodeConfig, VoiceStateUpdate } from "./types/internal.ts";
 import type { TrackData } from "./types/protocol.ts";
 import { DestroyReasons } from "./types/constants.ts";
 import type { Node } from "./node/Node.ts";
+import { buildCapabilities } from "./node/capabilities.ts";
+import { TTLCache } from "./utils/TTLCache.ts";
+import { Queue } from "./queue/Queue.ts";
+import { NodeManager } from "./node/NodeManager.ts";
+import { EventDispatcher } from "./ws/EventDispatcher.ts";
+import { decodeTrackInfo } from "./tracks/TrackEncoder.ts";
+import { PrometheusExporter } from "./metrics/PrometheusExporter.ts";
 
 function makeTrack(encoded: string): TrackData {
   return {
@@ -295,7 +302,6 @@ describe("bug regressions", () => {
     });
 
     it("detects Lavalink plugin capabilities from info.plugins", () => {
-      const { buildCapabilities } = require("./node/capabilities.ts");
       const info = {
         version: { semver: "4.0.0", major: 4, minor: 0, patch: 0, preRelease: null, build: null },
         buildTime: 0,
@@ -373,7 +379,6 @@ describe("bug regressions", () => {
     });
 
     it("bounds TTLCache size and evicts on capacity", () => {
-      const { TTLCache } = require("./utils/TTLCache.ts");
       const cache = new TTLCache(3);
       cache.set("a", 1, 10);
       cache.set("b", 2);
@@ -387,8 +392,7 @@ describe("bug regressions", () => {
     });
 
     it("retains detached track in queue.currentTrack when dequeueing active track", () => {
-      const { Queue } = require("./queue/Queue.ts");
-      const q = new Queue();
+      const q = new Queue<TrackData>();
       const t1 = makeTrack("track-1");
       const t2 = makeTrack("track-2");
       q.enqueue(t1);
@@ -405,7 +409,7 @@ describe("bug regressions", () => {
       // Once next is called, detached track moves to history and advances
       const nextTrack = q.next();
       expect(nextTrack?.info.identifier).toBe("track-2");
-      expect(q.history[0]?.info.identifier).toBe("track-1");
+      expect(q.historyList[0]?.info.identifier).toBe("track-1");
     });
 
     it("createPlayer replaces destroyed player instead of returning dead husk", async () => {
@@ -425,7 +429,6 @@ describe("bug regressions", () => {
     });
 
     it("NodeManager.destroyAll calls destroy on each node", async () => {
-      const { NodeManager } = require("./node/NodeManager.ts");
       const mgr = new NodeManager("user-1");
       const n1 = mgr.add({ host: "localhost", port: 2333, password: "youshallnotpass", name: "n1" });
       const n2 = mgr.add({ host: "localhost", port: 2334, password: "youshallnotpass", name: "n2" });
@@ -445,7 +448,6 @@ describe("bug regressions", () => {
     });
 
     it("Queue supports add(tracks[]), enqueueMany, and computes duration", () => {
-      const { Queue } = require("./queue/Queue.ts");
       const q = new Queue();
       const t1 = { ...makeTrack("t1"), info: { ...makeTrack("t1").info, length: 30000 } };
       const t2 = { ...makeTrack("t2"), info: { ...makeTrack("t2").info, length: 45000 } };
@@ -479,20 +481,99 @@ describe("bug regressions", () => {
     });
 
     it("EventDispatcher supports EventEmitter aliases", () => {
-      const { EventDispatcher } = require("./ws/EventDispatcher.ts");
       const d = new EventDispatcher();
       const fn = vi.fn();
 
-      d.addListener("nodeConnect", fn);
-      expect(d.listenerCount("nodeConnect")).toBe(1);
-      expect(d.eventNames()).toContain("nodeConnect");
-      expect(d.listeners("nodeConnect")).toEqual([fn]);
+      d.addListener("nodeReady", fn);
+      expect(d.listenerCount("nodeReady")).toBe(1);
+      expect(d.eventNames()).toContain("nodeReady");
+      expect(d.listeners("nodeReady")).toEqual([fn]);
 
       d.setMaxListeners(20);
       expect(d.getMaxListeners()).toBe(20);
 
-      d.removeListener("nodeConnect", fn);
-      expect(d.listenerCount("nodeConnect")).toBe(0);
+      d.removeListener("nodeReady", fn);
+      expect(d.listenerCount("nodeReady")).toBe(0);
+    });
+
+    it("decodes Lavalink v3 track format with artworkUrl and isrc", () => {
+      // Build a v3 buffer
+      const buf = Buffer.alloc(256);
+      let pos = 0;
+      buf.writeInt32BE((1 << 30) | 120, pos); pos += 4;
+      buf.writeUInt8(3, pos); pos += 1; // version 3
+      // title
+      const tBuf = Buffer.from("V3 Title", "utf8");
+      buf.writeUInt16BE(tBuf.length, pos); pos += 2;
+      tBuf.copy(buf, pos); pos += tBuf.length;
+      // author
+      const aBuf = Buffer.from("V3 Author", "utf8");
+      buf.writeUInt16BE(aBuf.length, pos); pos += 2;
+      aBuf.copy(buf, pos); pos += aBuf.length;
+      // length
+      buf.writeBigInt64BE(60000n, pos); pos += 8;
+      // identifier
+      const idBuf = Buffer.from("v3-id", "utf8");
+      buf.writeUInt16BE(idBuf.length, pos); pos += 2;
+      idBuf.copy(buf, pos); pos += idBuf.length;
+      // isStream
+      buf.writeUInt8(0, pos); pos += 1;
+      // hasUri + uri
+      buf.writeUInt8(1, pos); pos += 1;
+      const uBuf = Buffer.from("https://example.com", "utf8");
+      buf.writeUInt16BE(uBuf.length, pos); pos += 2;
+      uBuf.copy(buf, pos); pos += uBuf.length;
+      // hasArtworkUrl + artworkUrl
+      buf.writeUInt8(1, pos); pos += 1;
+      const artBuf = Buffer.from("https://example.com/art.jpg", "utf8");
+      buf.writeUInt16BE(artBuf.length, pos); pos += 2;
+      artBuf.copy(buf, pos); pos += artBuf.length;
+      // hasIsrc + isrc
+      buf.writeUInt8(1, pos); pos += 1;
+      const isrcBuf = Buffer.from("US1234567890", "utf8");
+      buf.writeUInt16BE(isrcBuf.length, pos); pos += 2;
+      isrcBuf.copy(buf, pos); pos += isrcBuf.length;
+      // source
+      const sBuf = Buffer.from("youtube", "utf8");
+      buf.writeUInt16BE(sBuf.length, pos); pos += 2;
+      sBuf.copy(buf, pos); pos += sBuf.length;
+      // position
+      buf.writeBigInt64BE(0n, pos); pos += 8;
+
+      const base64 = buf.subarray(0, pos).toString("base64");
+      const decoded = decodeTrackInfo(base64);
+
+      expect(decoded.title).toBe("V3 Title");
+      expect(decoded.author).toBe("V3 Author");
+      expect(decoded.artworkUrl).toBe("https://example.com/art.jpg");
+      expect(decoded.isrc).toBe("US1234567890");
+    });
+
+    it("MiddlewareRegistry intercepts playback in kumo.play()", async () => {
+      const k = new YuKumo({ nodes: nodeConfigs });
+      const n = k.nodes.get("main")!;
+      silenceWs(n);
+      const player = await k.createPlayer({ guildId: "mid-guild", voiceChannelId: "vc-1" });
+      player.setVoiceState({ sessionId: "s1", channelId: "vc-1", endpoint: "wss://ep", token: "tok" });
+
+      let intercepted = false;
+      k.middleware.useBeforeTrackStart((_guildId, _track) => {
+        intercepted = true;
+        return false; // reject
+      });
+
+      await k.play("mid-guild", makeTrack("blocked-track"));
+      expect(intercepted).toBe(true);
+      expect(player.status).toBe("idle");
+    });
+
+    it("PrometheusExporter reports actual connected nodes count", () => {
+      const k = new YuKumo({ nodes: nodeConfigs });
+      const exporter = new PrometheusExporter(k);
+
+      // Main node starts disconnected in mock test
+      const rendered = exporter.renderMetrics();
+      expect(rendered).toContain("yukumo_connected_nodes 0");
     });
   });
 });

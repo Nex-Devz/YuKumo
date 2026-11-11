@@ -3,15 +3,25 @@ export const OP_CODES = {
   PLAYER_UPDATE: "playerUpdate",
   STATS: "stats",
   EVENT: "event",
+  /** @deprecated Legacy Lavalink v3 client opcode. Lavalink v4 uses headers in WS handshake. */
   IDENTIFY: "identify",
+  /** @deprecated Legacy Lavalink v3 client opcode. Lavalink v4 uses headers in WS handshake. */
   CONFIGURE_RESUMING: "configureResuming",
+  /** @deprecated Legacy Lavalink v3 client opcode. Lavalink v4 uses REST PATCH /v4/sessions/{id}/players/{guildId}. */
   VOICE_UPDATE: "voiceUpdate",
+  /** @deprecated Legacy Lavalink v3 client opcode. Lavalink v4 uses REST PATCH /v4/sessions/{id}/players/{guildId}. */
   PLAY: "play",
+  /** @deprecated Legacy Lavalink v3 client opcode. Lavalink v4 uses REST PATCH /v4/sessions/{id}/players/{guildId}. */
   STOP: "stop",
+  /** @deprecated Legacy Lavalink v3 client opcode. Lavalink v4 uses REST PATCH /v4/sessions/{id}/players/{guildId}. */
   PAUSE: "pause",
+  /** @deprecated Legacy Lavalink v3 client opcode. Lavalink v4 uses REST PATCH /v4/sessions/{id}/players/{guildId}. */
   SEEK: "seek",
+  /** @deprecated Legacy Lavalink v3 client opcode. Lavalink v4 uses REST PATCH /v4/sessions/{id}/players/{guildId}. */
   VOLUME: "volume",
+  /** @deprecated Legacy Lavalink v3 client opcode. Lavalink v4 uses REST PATCH /v4/sessions/{id}/players/{guildId}. */
   FILTERS: "filters",
+  /** @deprecated Legacy Lavalink v3 client opcode. Lavalink v4 uses REST DELETE /v4/sessions/{id}/players/{guildId}. */
   DESTROY: "destroy",
 } as const;
 

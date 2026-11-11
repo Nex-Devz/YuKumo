@@ -5,6 +5,34 @@ All notable changes to the `yukumo` Lavalink client library will be documented i
 ## [Unreleased]
 
 ### Added
+- **Batch Enqueue**: `Queue.add(track | track[])` and `Queue.enqueueMany(tracks[])` allow enqueuing collections in a single operation with a single change notification.
+- **Queue Duration**: `Queue.duration` getter returns the sum of all queued track lengths (including detached active track).
+- **Player Restart**: `Player.restart()` seeks current playback to 0ms.
+- **EventEmitter API**: `EventDispatcher` and `YuKumo` now implement standard Node.js EventEmitter methods: `addListener`, `removeListener`, `eventNames`, `listeners`, `rawListeners`, `setMaxListeners`, and `getMaxListeners`.
+- **Lavalink v4 Track Format v3**: `decodeTrackInfo` supports version 3 track decoding, extracting `artworkUrl` and `isrc`.
+- **Middleware Registry**: `YuKumo.middleware` (`MiddlewareRegistry`) allows intercepting track playback with `useBeforeTrackStart`.
+- **Configurable Client Name**: `NodeConfig.clientName` and `ManagerOptions.clientName` (defaults to `YuKumo/1.9.0`).
+
+### Fixed
+- **Storage Adapter Lifecycle**: `StorageAdapter.connect?()` is invoked during `YuKumo.init()`; `RedisStorage` auto-connects to Redis if not pre-connected (`CRIT-01`).
+- **Voluntary Node Migration Dual-Audio Leak**: `Player.setNode()` destroys the player on the old node before starting playback on the new node (`CRIT-02`).
+- **Lavalink Plugin Capability Detection**: `buildCapabilities` inspects `info.plugins` to detect `lavalyrics` / `lyrics` and `sponsorblock` plugins (`CRIT-03`).
+- **Gateway Adapter Auto-Wiring**: `YuKumo.registerAdapter()` auto-wires OP4 gateway dispatching if `options.send` was not manually provided (`CRIT-04`).
+- **NodeLink Batch Encode Endpoint**: Corrected typo from `/encodedtracks` to `/encodetracks` in `RestClient.encodeTracks()` (`CRIT-05`).
+- **Plugin Lifecycle Forwarding**: `YuKumo.registerPlugins()` and `PluginManager` now forward the `YuKumo` instance to `plugin.init(manager)` (`CRIT-06`).
+- **Default Node Selector Wiring**: `ManagerOptions.defaultNodeSelector` is now passed to `NodeManager` constructor (`CRIT-07`).
+- **TTLCache Bounded Size**: `TTLCache` now supports `maxSize` and sweeps expired entries on write to prevent memory growth (`CRIT-08`).
+- **Queue Dequeue Detached Track**: `Queue.dequeue(0)` preserves the active playing track in `_detachedCurrent` so audio playback and history advance correctly (`CRIT-09`).
+- **Destroyed Player Husk Filtering**: `YuKumo.createPlayer()` ignores destroyed player instances and replaces them cleanly (`CRIT-10`).
+- **CommonJS Resolution**: `package.json` `"main"` points to `./dist/index.cjs` for legacy CommonJS loaders (`IMPR-01`).
+- **Node Cleanup on Destroy**: `NodeManager.destroyAll()` calls `node.destroy()` on all nodes (`IMPR-02`).
+- **Prometheus Metrics Accuracy**: `yukumo_connected_nodes` gauge reflects `nodes.getConnected().length` rather than total node registry size (`IMPR-08`).
+- **Protocol Opcode Deprecation**: Deprecated legacy Lavalink v3 WebSocket client-to-server opcodes in `OP_CODES` (`NICE-01`).
+
+### Changed
+- ESLint configuration script cleaned up in `package.json` for modern ESLint CLI compatibility.
+
+### Added
 - **First-class NodeLink support (mixed pools)**: connect to Lavalink, NodeLink, or both at once with one API.
   - `NodeConfig.type: "lavalink" | "nodelink" | "auto"` (default `"auto"`, detected from `/v4/info`); legacy `isNodeLink` still honored. `createNodeLinkNode()` / `createLavalinkNode()` config helpers.
   - `node.type`, `node.version`, `node.capabilities`, `node.sourceManagers` getters resolved on `ready`.

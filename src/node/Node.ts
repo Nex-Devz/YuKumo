@@ -76,7 +76,7 @@ export class Node {
     this.ws = new WebSocketClient({
       nodeConfig: config,
       userId,
-      clientName: "YuKumo/0.0.1",
+      clientName: config.clientName ?? "YuKumo/1.9.0",
     });
 
     this.ws.eventDispatcher.on("stats", (_nodeId: string, stats: NodeStats) => {
@@ -276,7 +276,7 @@ export class Node {
       nodeConfig: this.config,
       userId: this._userId,
       guildId,
-      clientName: "YuKumo/0.0.1",
+      clientName: this.config.clientName ?? "YuKumo/1.9.0",
     });
   }
 

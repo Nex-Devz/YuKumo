@@ -157,6 +157,8 @@ function toTrackInfo(parts: {
   uri: string | null;
   source: string;
   position: number;
+  artworkUrl?: string | null;
+  isrc?: string | null;
 }): TrackInfo {
   return {
     title: parts.title,
@@ -169,8 +171,8 @@ function toTrackInfo(parts: {
     position: parts.position,
     // Lavalink derives seekability from the stream flag — live sources can't seek
     isSeekable: !parts.isStream,
-    artworkUrl: null,
-    isrc: null,
+    artworkUrl: parts.artworkUrl ?? null,
+    isrc: parts.isrc ?? null,
   };
 }
 
@@ -231,7 +233,36 @@ export function decodeTrackInfo(encoded: string): TrackInfo {
     return toTrackInfo({ title, author, length, identifier, isStream, uri, source, position });
   }
 
+  if (version === 3) {
+    const title = input.readUTF();
+    const author = input.readUTF();
+    const length = input.readLong();
+    const identifier = input.readUTF();
+    const isStream = input.readBoolean();
+    const hasUri = input.readBoolean();
+    const uri = hasUri ? input.readUTF() : null;
+    const hasArtworkUrl = input.readBoolean();
+    const artworkUrl = hasArtworkUrl ? input.readUTF() : null;
+    const hasIsrc = input.readBoolean();
+    const isrc = hasIsrc ? input.readUTF() : null;
+    const source = input.readUTF();
+    readProbeInfoIfNeeded(source, input);
+    const position = input.readLong();
+    return toTrackInfo({
+      title,
+      author,
+      length,
+      identifier,
+      isStream,
+      uri,
+      source,
+      position,
+      artworkUrl,
+      isrc,
+    });
+  }
+
   throw new Error(
-    `This track's version is not supported. Track version: ${version}, supported versions: 1, 2`,
+    `This track's version is not supported. Track version: ${version}, supported versions: 1, 2, 3`,
   );
 }
