@@ -111,12 +111,27 @@ export function buildCapabilities(type: NodeType, info: LavalinkInfo | null): No
     return { type, version, features, filters, sourceManagers };
   }
 
-  // Lavalink: standard filters plus whatever info listed; no NodeLink extras.
+  // Lavalink: standard filters plus whatever info listed; detect installed plugins
   const filters = new Set<string>([...STANDARD_FILTERS, ...(info?.filters ?? [])]);
+  const features = new Set<NodeFeature>(LAVALINK_FEATURES);
+
+  if (info?.plugins != null) {
+    for (const plugin of info.plugins) {
+      const name = (plugin.name ?? "").toLowerCase();
+      if (name.includes("sponsorblock")) {
+        features.add("sponsorblock");
+      }
+      if (name.includes("lyrics") || name.includes("lavalyrics")) {
+        features.add("lyrics");
+        features.add("lyricsSubscribe");
+      }
+    }
+  }
+
   return {
     type,
     version,
-    features: new Set<NodeFeature>(LAVALINK_FEATURES),
+    features,
     filters,
     sourceManagers,
   };

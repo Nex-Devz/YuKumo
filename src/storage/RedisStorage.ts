@@ -80,7 +80,14 @@ export class RedisStorage implements StorageAdapter {
     }
   }
 
-  private requireClient(): RedisClient {
+  private async ensureClient(): Promise<RedisClient> {
+    if (this.client == null) {
+      await this.connect();
+    }
+    return this.client!;
+  }
+
+  public requireClient(): RedisClient {
     if (this.client == null) {
       throw new StorageError("Redis not connected — call connect() first", "REDIS_NOT_CONNECTED");
     }
@@ -88,7 +95,7 @@ export class RedisStorage implements StorageAdapter {
   }
 
   public async get(key: string): Promise<unknown | null> {
-    const client = this.requireClient();
+    const client = await this.ensureClient();
 
     const value = await client.get(this.getKey(key));
     if (value == null) return null;
@@ -103,7 +110,7 @@ export class RedisStorage implements StorageAdapter {
   }
 
   public async set(key: string, value: unknown, ttlMs?: number): Promise<void> {
-    const client = this.requireClient();
+    const client = await this.ensureClient();
 
     const serialized = JSON.stringify(value);
     const effectiveTtl = ttlMs ?? this.options.ttlMs;
@@ -115,17 +122,19 @@ export class RedisStorage implements StorageAdapter {
   }
 
   public async delete(key: string): Promise<boolean> {
-    const result = await this.requireClient().del(this.getKey(key));
+    const client = await this.ensureClient();
+    const result = await client.del(this.getKey(key));
     return result > 0;
   }
 
   public async has(key: string): Promise<boolean> {
-    const result = await this.requireClient().exists(this.getKey(key));
+    const client = await this.ensureClient();
+    const result = await client.exists(this.getKey(key));
     return result === 1;
   }
 
   public async clear(): Promise<void> {
-    const client = this.requireClient();
+    const client = await this.ensureClient();
 
     // Delete only keys under our prefix — FLUSHDB would wipe unrelated data
     // from applications sharing the same Redis database

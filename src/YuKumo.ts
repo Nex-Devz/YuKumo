@@ -280,6 +280,9 @@ export class YuKumo {
    * and persisted players are rebuilt automatically.
    */
   public async init(): Promise<void> {
+    if (typeof this.storage.connect === "function") {
+      await this.storage.connect();
+    }
     if (this.resuming.enabled) {
       await this.seedPersistedSessions();
     }

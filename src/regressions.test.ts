@@ -265,5 +265,55 @@ describe("bug regressions", () => {
         vi.useRealTimers();
       }
     });
+
+    it("destroys player on old node during voluntary setNode migration", async () => {
+      const { kumo, main, backup } = resumingKumo();
+      Object.defineProperty(main.ws, "state", { get: () => "connected", configurable: true });
+      main.rest.destroyPlayer = vi.fn().mockResolvedValue(undefined);
+      const player = kumo.players.create({ guildId: "g-clean", node: main, voiceChannelId: "vc" });
+      player.setVoiceState({ sessionId: "s1", channelId: "vc", endpoint: "wss://ep", token: "tok" });
+
+      await player.setNode(backup);
+      expect(main.rest.destroyPlayer).toHaveBeenCalledWith("sess-main", "g-clean");
+      expect(player.node).toBe(backup);
+    });
+
+    it("initializes storage adapter with connect() hook in kumo.init()", async () => {
+      const mockStorage = {
+        get: vi.fn().mockResolvedValue(null),
+        set: vi.fn().mockResolvedValue(undefined),
+        delete: vi.fn().mockResolvedValue(true),
+        has: vi.fn().mockResolvedValue(false),
+        clear: vi.fn().mockResolvedValue(undefined),
+        connect: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const k = new YuKumo({ nodes: nodeConfigs, storageAdapter: mockStorage });
+      silenceWs(k.nodes.get("main")!);
+      await k.init();
+      expect(mockStorage.connect).toHaveBeenCalled();
+    });
+
+    it("detects Lavalink plugin capabilities from info.plugins", () => {
+      const { buildCapabilities } = require("./node/capabilities.ts");
+      const info = {
+        version: { semver: "4.0.0", major: 4, minor: 0, patch: 0, preRelease: null, build: null },
+        buildTime: 0,
+        git: { branch: "main", commit: "abc", commitTime: 0 },
+        jvm: "21",
+        lavaplayer: "2.0",
+        sourceManagers: ["youtube"],
+        filters: ["volume"],
+        plugins: [
+          { name: "lavalyrics-plugin", version: "1.0.0" },
+          { name: "sponsorblock-plugin", version: "1.0.0" },
+        ],
+      };
+
+      const caps = buildCapabilities("lavalink", info);
+      expect(caps.features.has("lyrics")).toBe(true);
+      expect(caps.features.has("lyricsSubscribe")).toBe(true);
+      expect(caps.features.has("sponsorblock")).toBe(true);
+    });
   });
 });

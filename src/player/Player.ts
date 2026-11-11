@@ -792,6 +792,11 @@ export class Player<TTrack extends TrackData = TrackData> {
     // failover the user didn't initiate must degrade, not throw.
     this.dropUnsupportedFilters(node);
 
+    // Clean up player state on old node so it stops streaming audio
+    if (oldNode.state === "connected" && oldNode.rest.sessionId != null) {
+      await oldNode.rest.destroyPlayer(oldNode.rest.sessionId, this.guildId).catch(() => undefined);
+    }
+
     if (this._status === "playing" && this.currentTrack != null) {
       await this.playTrack(this.currentTrack, { position: this.position });
     } else {

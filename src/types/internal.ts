@@ -224,6 +224,8 @@ export interface StorageAdapter {
   delete(key: string): Promise<boolean>;
   has(key: string): Promise<boolean>;
   clear(): Promise<void>;
+  /** Optional startup hook; called by YuKumo.init() so backends can initialize connections */
+  connect?(): Promise<void>;
   /** Optional teardown hook; called by YuKumo.destroy() so backends can release connections */
   disconnect?(): Promise<void>;
 }
