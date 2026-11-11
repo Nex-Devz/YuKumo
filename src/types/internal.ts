@@ -122,12 +122,7 @@ export interface ManagerOptions {
     timeout?: number;
     persistPlayers?: boolean;
   };
-  defaultNodeSelector?: {
-    pick: (
-      nodes: Array<{ id: string; state: NodeState; penalties: { total: number }; playerCount: number }>,
-      guildId: string,
-    ) => { id: string } | null;
-  };
+  defaultNodeSelector?: import("../node/NodeSelector.ts").NodeSelector;
   storageAdapter?: StorageAdapter;
   plugins?: Array<{
     name: string;

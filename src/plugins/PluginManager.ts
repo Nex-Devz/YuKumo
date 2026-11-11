@@ -20,6 +20,11 @@ export class PluginManager {
   };
 
   private readonly pendingInits: Promise<void>[] = [];
+  private readonly manager?: unknown;
+
+  public constructor(manager?: unknown) {
+    this.manager = manager;
+  }
 
   /**
    * Called whenever a plugin init or lifecycle hook throws. YuKumo routes this
@@ -238,7 +243,7 @@ export class PluginManager {
 
   private async callInit(plugin: Plugin): Promise<void> {
     try {
-      await plugin.init!();
+      await plugin.init!(this.manager);
     } catch (error) {
       throw new PluginError(
         `Plugin "${plugin.name}" failed to initialize: ${(error as Error).message}`,

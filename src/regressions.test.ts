@@ -315,5 +315,61 @@ describe("bug regressions", () => {
       expect(caps.features.has("lyricsSubscribe")).toBe(true);
       expect(caps.features.has("sponsorblock")).toBe(true);
     });
+
+    it("auto-wires sendGatewayPayload when an adapter is registered", () => {
+      const k = new YuKumo({ nodes: [] });
+      expect(k.sendGatewayPayload).toBeUndefined();
+
+      const sent: any[] = [];
+      const dummyAdapter = {
+        destroy: vi.fn(),
+        sendVoiceStateUpdate: (guildId: string, channelId: string | null, selfDeaf?: boolean, selfMute?: boolean) => {
+          sent.push({ guildId, channelId, selfDeaf, selfMute });
+        },
+      };
+
+      k.registerAdapter(dummyAdapter);
+      expect(typeof k.sendGatewayPayload).toBe("function");
+
+      k.sendGatewayPayload!("123", {
+        op: 4,
+        d: { guild_id: "123", channel_id: "456", self_deaf: true, self_mute: false },
+      });
+
+      expect(sent).toEqual([{ guildId: "123", channelId: "456", selfDeaf: true, selfMute: false }]);
+    });
+
+    it("forwards YuKumo instance to plugin init hook", async () => {
+      let passedManager: any = null;
+      const k = new YuKumo({
+        nodes: [],
+        plugins: [
+          {
+            name: "test-plugin",
+            version: "1.0.0",
+            init: (mgr) => {
+              passedManager = mgr;
+            },
+          },
+        ],
+      });
+
+      await k.plugins.ready();
+      expect(passedManager).toBe(k);
+    });
+
+    it("wires defaultNodeSelector into NodeManager", () => {
+      const customSelector = {
+        pick: vi.fn().mockReturnValue(null),
+      };
+      const k = new YuKumo({
+        nodes: [],
+        defaultNodeSelector: customSelector,
+      });
+
+      // Internal NodeManager selector should be wired
+      const selected = (k.nodes as any).selector;
+      expect(selected).toBe(customSelector);
+    });
   });
 });

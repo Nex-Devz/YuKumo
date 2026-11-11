@@ -834,7 +834,7 @@ export class RestClient {
   public async encodeTracks(
     tracks: Array<EncodeTrackPayload | { info: EncodeTrackPayload }>,
   ): Promise<string[]> {
-    return this.request<string[]>("POST", "/encodedtracks", tracks);
+    return this.request<string[]>("POST", "/encodetracks", tracks);
   }
 
   /**

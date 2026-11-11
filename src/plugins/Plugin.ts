@@ -4,7 +4,7 @@ import type { SearchResult } from "../types/internal.ts";
 export interface Plugin {
   readonly name: string;
   readonly version: string;
-  init?(): void | Promise<void>;
+  init?(manager?: unknown): void | Promise<void>;
   start?(): void | Promise<void>;
   destroy?(): void | Promise<void>;
 }

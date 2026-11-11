@@ -1,4 +1,5 @@
 import { NodeManager } from "./node/NodeManager.ts";
+import type { NodeSelector } from "./node/NodeSelector.ts";
 import { PlayerManager } from "./player/PlayerManager.ts";
 import { PluginManager } from "./plugins/PluginManager.ts";
 import { EventDispatcher } from "./ws/EventDispatcher.ts";
@@ -161,8 +162,8 @@ export class YuKumo {
   public defaultSearchSource: string;
   /** Disconnect behavior configuration (see ManagerOptions.onDisconnect) */
   private readonly onDisconnect: { destroyPlayer: boolean; autoReconnect: boolean };
-  /** User-provided Discord gateway dispatcher for OP4 voice payloads (see ManagerOptions.send) */
-  public readonly sendGatewayPayload?: (guildId: string, payload: VoiceGatewayPayload) => void;
+  /** Discord gateway dispatcher for OP4 voice payloads (see ManagerOptions.send) */
+  public sendGatewayPayload?: (guildId: string, payload: VoiceGatewayPayload) => void;
   /** Level-filtered logger for internal diagnostics (no-op unless configured) */
   public readonly logger: Logger;
   /** Voice connection timeout in milliseconds (default 15000) */
@@ -171,7 +172,10 @@ export class YuKumo {
   public readonly voiceConnectionRetries: number;
   private _userId: string;
   private readonly pendingPlayerCreates = new Map<string, Promise<Player>>();
-  private readonly adapters = new Set<{ destroy(): void }>();
+  private readonly adapters = new Set<{
+    destroy(): void;
+    sendVoiceStateUpdate?(guildId: string, channelId: string | null, selfDeaf?: boolean, selfMute?: boolean): void;
+  }>();
   /** Custom Player subclass used by PlayerManager.create */
   public readonly playerClass?: ManagerOptions["playerClass"];
   /** URL query gatekeeping (see ManagerOptions.linksAllowed/linksWhitelist/linksBlacklist) */
@@ -228,9 +232,9 @@ export class YuKumo {
     this.events = new EventDispatcher();
     this.voice = new VoiceStateTracker(this.events);
     this.searchCache = new SearchCache();
-    this.nodes = new NodeManager(this._userId);
+    this.nodes = new NodeManager(this._userId, options.defaultNodeSelector as NodeSelector | undefined);
     this.players = new PlayerManager(this);
-    this.plugins = new PluginManager();
+    this.plugins = new PluginManager(this);
     this.plugins.onPluginError = (source, error) => {
       const message = `Plugin error in ${source}: ${error instanceof Error ? error.message : String(error)}`;
       this.logger.warn(message);
@@ -258,8 +262,33 @@ export class YuKumo {
   }
 
   /** Registers an adapter for automatic listener teardown when this manager is destroyed */
-  public registerAdapter(adapter: { destroy(): void }): void {
+  public registerAdapter(
+    adapter: {
+      destroy(): void;
+      sendVoiceStateUpdate?(guildId: string, channelId: string | null, selfDeaf?: boolean, selfMute?: boolean): void;
+    },
+    sendPayload?: (guildId: string, payload: VoiceGatewayPayload) => void,
+  ): void {
     this.adapters.add(adapter);
+    if (!this.sendGatewayPayload) {
+      if (sendPayload) {
+        this.sendGatewayPayload = sendPayload;
+      } else if (typeof adapter.sendVoiceStateUpdate === "function") {
+        this.sendGatewayPayload = (guildId, payload) => {
+          adapter.sendVoiceStateUpdate!(
+            guildId,
+            (payload.d?.channel_id as string | null) ?? null,
+            payload.d?.self_deaf ?? true,
+            payload.d?.self_mute ?? false,
+          );
+        };
+      }
+    }
+  }
+
+  /** Sets or overrides the Discord gateway dispatcher for OP4 voice payloads */
+  public setGatewaySender(sender: (guildId: string, payload: VoiceGatewayPayload) => void): void {
+    this.sendGatewayPayload = sender;
   }
 
   /** Sets the Discord Bot User ID for node handshakes */
@@ -1146,6 +1175,7 @@ export class YuKumo {
       const plugin: Plugin = {
         name: def.name,
         version: def.version,
+        init: () => def.init?.(this),
         start: def.start,
         destroy: def.destroy,
       };

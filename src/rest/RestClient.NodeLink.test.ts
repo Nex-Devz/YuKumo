@@ -145,7 +145,7 @@ describe("RestClient (NodeLink)", () => {
       expect(init.method).toBe("POST");
     });
 
-    it("POSTs an array to /v4/encodedtracks", async () => {
+    it("POSTs an array to /v4/encodetracks", async () => {
       const client = createClient();
       mockFetch.mockResolvedValue(mockResponse(200, ["AAA", "BBB"]));
 
@@ -162,7 +162,7 @@ describe("RestClient (NodeLink)", () => {
       ]);
 
       expect(result).toEqual(["AAA", "BBB"]);
-      expect(urlOf(mockFetch.mock.calls[0])).toContain("/v4/encodedtracks");
+      expect(urlOf(mockFetch.mock.calls[0])).toContain("/v4/encodetracks");
     });
   });
 
