@@ -329,7 +329,12 @@ describe("bug regressions", () => {
       const sent: any[] = [];
       const dummyAdapter = {
         destroy: vi.fn(),
-        sendVoiceStateUpdate: (guildId: string, channelId: string | null, selfDeaf?: boolean, selfMute?: boolean) => {
+        sendVoiceStateUpdate: (
+          guildId: string,
+          channelId: string | null,
+          selfDeaf?: boolean,
+          selfMute?: boolean,
+        ) => {
           sent.push({ guildId, channelId, selfDeaf, selfMute });
         },
       };
@@ -500,45 +505,67 @@ describe("bug regressions", () => {
       // Build a v3 buffer
       const buf = Buffer.alloc(256);
       let pos = 0;
-      buf.writeInt32BE((1 << 30) | 120, pos); pos += 4;
-      buf.writeUInt8(3, pos); pos += 1; // version 3
+      buf.writeInt32BE((1 << 30) | 120, pos);
+      pos += 4;
+      buf.writeUInt8(3, pos);
+      pos += 1; // version 3
       // title
       const tBuf = Buffer.from("V3 Title", "utf8");
-      buf.writeUInt16BE(tBuf.length, pos); pos += 2;
-      tBuf.copy(buf, pos); pos += tBuf.length;
+      buf.writeUInt16BE(tBuf.length, pos);
+      pos += 2;
+      tBuf.copy(buf, pos);
+      pos += tBuf.length;
       // author
       const aBuf = Buffer.from("V3 Author", "utf8");
-      buf.writeUInt16BE(aBuf.length, pos); pos += 2;
-      aBuf.copy(buf, pos); pos += aBuf.length;
+      buf.writeUInt16BE(aBuf.length, pos);
+      pos += 2;
+      aBuf.copy(buf, pos);
+      pos += aBuf.length;
       // length
-      buf.writeBigInt64BE(60000n, pos); pos += 8;
+      buf.writeBigInt64BE(60000n, pos);
+      pos += 8;
       // identifier
       const idBuf = Buffer.from("v3-id", "utf8");
-      buf.writeUInt16BE(idBuf.length, pos); pos += 2;
-      idBuf.copy(buf, pos); pos += idBuf.length;
+      buf.writeUInt16BE(idBuf.length, pos);
+      pos += 2;
+      idBuf.copy(buf, pos);
+      pos += idBuf.length;
       // isStream
-      buf.writeUInt8(0, pos); pos += 1;
+      buf.writeUInt8(0, pos);
+      pos += 1;
       // hasUri + uri
-      buf.writeUInt8(1, pos); pos += 1;
+      buf.writeUInt8(1, pos);
+      pos += 1;
       const uBuf = Buffer.from("https://example.com", "utf8");
-      buf.writeUInt16BE(uBuf.length, pos); pos += 2;
-      uBuf.copy(buf, pos); pos += uBuf.length;
+      buf.writeUInt16BE(uBuf.length, pos);
+      pos += 2;
+      uBuf.copy(buf, pos);
+      pos += uBuf.length;
       // hasArtworkUrl + artworkUrl
-      buf.writeUInt8(1, pos); pos += 1;
+      buf.writeUInt8(1, pos);
+      pos += 1;
       const artBuf = Buffer.from("https://example.com/art.jpg", "utf8");
-      buf.writeUInt16BE(artBuf.length, pos); pos += 2;
-      artBuf.copy(buf, pos); pos += artBuf.length;
+      buf.writeUInt16BE(artBuf.length, pos);
+      pos += 2;
+      artBuf.copy(buf, pos);
+      pos += artBuf.length;
       // hasIsrc + isrc
-      buf.writeUInt8(1, pos); pos += 1;
+      buf.writeUInt8(1, pos);
+      pos += 1;
       const isrcBuf = Buffer.from("US1234567890", "utf8");
-      buf.writeUInt16BE(isrcBuf.length, pos); pos += 2;
-      isrcBuf.copy(buf, pos); pos += isrcBuf.length;
+      buf.writeUInt16BE(isrcBuf.length, pos);
+      pos += 2;
+      isrcBuf.copy(buf, pos);
+      pos += isrcBuf.length;
       // source
       const sBuf = Buffer.from("youtube", "utf8");
-      buf.writeUInt16BE(sBuf.length, pos); pos += 2;
-      sBuf.copy(buf, pos); pos += sBuf.length;
+      buf.writeUInt16BE(sBuf.length, pos);
+      pos += 2;
+      sBuf.copy(buf, pos);
+      pos += sBuf.length;
       // position
-      buf.writeBigInt64BE(0n, pos); pos += 8;
+      buf.writeBigInt64BE(0n, pos);
+      pos += 8;
 
       const base64 = buf.subarray(0, pos).toString("base64");
       const decoded = decodeTrackInfo(base64);

@@ -176,7 +176,12 @@ export class YuKumo {
   private readonly pendingPlayerCreates = new Map<string, Promise<Player>>();
   private readonly adapters = new Set<{
     destroy(): void;
-    sendVoiceStateUpdate?(guildId: string, channelId: string | null, selfDeaf?: boolean, selfMute?: boolean): void;
+    sendVoiceStateUpdate?(
+      guildId: string,
+      channelId: string | null,
+      selfDeaf?: boolean,
+      selfMute?: boolean,
+    ): void;
   }>();
   /** Custom Player subclass used by PlayerManager.create */
   public readonly playerClass?: ManagerOptions["playerClass"];
@@ -267,7 +272,12 @@ export class YuKumo {
   public registerAdapter(
     adapter: {
       destroy(): void;
-      sendVoiceStateUpdate?(guildId: string, channelId: string | null, selfDeaf?: boolean, selfMute?: boolean): void;
+      sendVoiceStateUpdate?(
+        guildId: string,
+        channelId: string | null,
+        selfDeaf?: boolean,
+        selfMute?: boolean,
+      ): void;
     },
     sendPayload?: (guildId: string, payload: VoiceGatewayPayload) => void,
   ): void {
@@ -1005,7 +1015,11 @@ export class YuKumo {
     return this.off(event, callback);
   }
 
-  private registerNodes(configs: NodeConfig[], httpHeaders?: Record<string, string>, clientName?: string): void {
+  private registerNodes(
+    configs: NodeConfig[],
+    httpHeaders?: Record<string, string>,
+    clientName?: string,
+  ): void {
     for (const config of configs) {
       let merged =
         httpHeaders != null ? { ...config, httpHeaders: { ...httpHeaders, ...config.httpHeaders } } : config;
