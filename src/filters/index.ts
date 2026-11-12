@@ -1,4 +1,4 @@
-export { FilterChain } from "./FilterChain.ts";
+export { FilterChain, type FilterPresetName } from "./FilterChain.ts";
 export {
   VolumeFilter,
   EqualizerFilter,

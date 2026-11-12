@@ -1609,6 +1609,16 @@ export class Player<TTrack extends TrackData = TrackData> {
     await this.setFilters();
   }
 
+  /**
+   * Applies any registered preset or built-in standard preset name
+   * (e.g. "bassboost", "nightcore", "vaporwave", "8d", "slowed-reverb", "pop")
+   * and syncs the DSP filters to the node in real time.
+   */
+  public async setPreset(preset: import("../filters/FilterChain.ts").FilterPresetName): Promise<void> {
+    this.filters.setPreset(preset);
+    await this.setFilters();
+  }
+
   /** Toggles the nightcore filter preset */
   public async setNightcore(enabled: boolean = true): Promise<void> {
     this.filters.setNightcore(enabled);

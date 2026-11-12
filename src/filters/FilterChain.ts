@@ -41,6 +41,24 @@ export const AudioOutputs: Record<
 /**
  * Manages an active chain of Lavalink audio filters and provides preset shortcuts.
  */
+export type FilterPresetName =
+  | "bassboost"
+  | "bassboost-high"
+  | "bassboost-extreme"
+  | "nightcore"
+  | "vaporwave"
+  | "8d"
+  | "karaoke"
+  | "pop"
+  | "soft"
+  | "treblebass"
+  | "rock"
+  | "classical"
+  | "electronic"
+  | "slowed-reverb"
+  | "voice-isolation"
+  | (string & {});
+
 export class FilterChain {
   private readonly filters: Map<string, Filter> = new Map();
   /**
@@ -412,10 +430,68 @@ export class FilterChain {
     FilterChain.presetRegistry.set(name, payload);
   }
 
+  /**
+   * Applies any registered preset or built-in standard preset name.
+   * Built-in: bassboost, bassboost-high, bassboost-extreme, nightcore,
+   * vaporwave, 8d, karaoke, pop, soft, treblebass, rock, classical,
+   * electronic, slowed-reverb, voice-isolation.
+   */
+  public setPreset(name: FilterPresetName): this {
+    const custom = FilterChain.presetRegistry.get(name);
+    if (custom != null) {
+      this.apply(custom);
+      return this;
+    }
+
+    switch (name.toLowerCase()) {
+      case "bassboost":
+        return this.setBassBoost("medium");
+      case "bassboost-low":
+        return this.setBassBoost("low");
+      case "bassboost-high":
+        return this.setBassBoost("high");
+      case "bassboost-extreme":
+        return this.setBassBoost("extreme");
+      case "nightcore":
+        return this.setNightcore(true);
+      case "vaporwave":
+        return this.setVaporwave(true);
+      case "8d":
+      case "3d":
+        return this.set8D(true);
+      case "karaoke":
+        return this.setKaraoke(true);
+      case "pop":
+        return this.setPop(true);
+      case "soft":
+        return this.setSoft(true);
+      case "treblebass":
+      case "treble-bass":
+        return this.setTrebleBass(true);
+      case "rock":
+        return this.setRock(true);
+      case "classical":
+        return this.setClassical(true);
+      case "electronic":
+        return this.setElectronic(true);
+      case "slowed-reverb":
+      case "slowedreverb":
+        return this.setSlowedReverb(true);
+      case "voice-isolation":
+      case "voiceisolation":
+        return this.setVoiceIsolation(true);
+      default:
+        return this;
+    }
+  }
+
   /** Applies a registered custom named filter preset */
   public applyPreset(name: string): boolean {
     const payload = FilterChain.presetRegistry.get(name);
-    if (payload == null) return false;
+    if (payload == null) {
+      this.setPreset(name);
+      return true;
+    }
     this.apply(payload);
     return true;
   }

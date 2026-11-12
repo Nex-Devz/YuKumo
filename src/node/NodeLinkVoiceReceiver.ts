@@ -1,3 +1,4 @@
+import { Readable } from "node:stream";
 import WebSocket from "ws";
 import type { NodeConfig } from "../types/internal.ts";
 
@@ -30,6 +31,10 @@ export interface VoiceDataFrame {
 export interface NodeLinkVoiceReceiverEvents {
   startSpeaking: (event: VoiceStartSpeaking) => void;
   endSpeaking: (event: VoiceEndSpeaking) => void;
+  /** VAD alias for startSpeaking */
+  speakingStart: (event: VoiceStartSpeaking) => void;
+  /** VAD alias for endSpeaking */
+  speakingEnd: (event: VoiceEndSpeaking) => void;
   /** Streamed per-frame audio for real-time consumers */
   data: (frame: VoiceDataFrame) => void;
   open: () => void;
@@ -83,6 +88,8 @@ export class NodeLinkVoiceReceiver {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   /** Audio buffer for the current speech session (reset on stop) */
   private speechBuffer: Buffer | null = null;
+  /** Active user-specific audio output streams */
+  private readonly userStreams = new Map<string, Set<{ format: "pcm" | "opus"; stream: Readable }>>();
 
   public constructor(options: NodeLinkVoiceReceiverOptions) {
     this.options = options;
@@ -266,13 +273,16 @@ export class NodeLinkVoiceReceiver {
 
       if (op === OP_START) {
         this.speechBuffer = null;
-        this.emit("startSpeaking", { userId, guildId });
+        const evt = { userId, guildId };
+        this.emit("startSpeaking", evt);
+        this.emit("speakingStart", evt);
         return;
       }
 
       if (op === OP_DATA) {
         const frame: VoiceDataFrame = { userId, guildId, ssrc, timestamp, payload };
         this.emit("data", frame);
+        this.dispatchUserStreamFrame(userId, format, payload);
         this.speechBuffer = this.speechBuffer != null ? Buffer.concat([this.speechBuffer, payload]) : payload;
         return;
       }
@@ -280,12 +290,14 @@ export class NodeLinkVoiceReceiver {
       if (op === OP_STOP) {
         const captured = this.speechBuffer;
         this.speechBuffer = null;
-        this.emit("endSpeaking", {
+        const endEvt: VoiceEndSpeaking = {
           userId,
           guildId,
           data: captured != null ? captured.toString("base64") : "",
           type: FORMAT_NAMES[format] ?? `format_${format}`,
-        });
+        };
+        this.emit("endSpeaking", endEvt);
+        this.emit("speakingEnd", endEvt);
         return;
       }
 
@@ -315,11 +327,15 @@ export class NodeLinkVoiceReceiver {
 
     switch (parsed.type) {
       case "startSpeakingEvent": {
-        this.emit("startSpeaking", parsed.data as unknown as VoiceStartSpeaking);
+        const evt = parsed.data as unknown as VoiceStartSpeaking;
+        this.emit("startSpeaking", evt);
+        this.emit("speakingStart", evt);
         break;
       }
       case "endSpeakingEvent": {
-        this.emit("endSpeaking", parsed.data as unknown as VoiceEndSpeaking);
+        const evt = parsed.data as unknown as VoiceEndSpeaking;
+        this.emit("endSpeaking", evt);
+        this.emit("speakingEnd", evt);
         break;
       }
       default: {
@@ -365,6 +381,72 @@ export class NodeLinkVoiceReceiver {
       this.ws = null;
     }
     this.speechBuffer = null;
+    for (const streamSet of this.userStreams.values()) {
+      for (const entry of streamSet) {
+        entry.stream.push(null);
+      }
+    }
+    this.userStreams.clear();
     this.listeners.clear();
+  }
+
+  /**
+   * Creates a live Readable audio stream for a specific Discord user's PCM frames.
+   * Frame chunks are emitted as `Buffer` objects in real-time as received from NodeLink.
+   */
+  public createPCMStream(userId: string): Readable {
+    return this.createUserStream(userId, "pcm");
+  }
+
+  /**
+   * Creates a live Readable audio stream for a specific Discord user's Opus frames.
+   */
+  public createOpusStream(userId: string): Readable {
+    return this.createUserStream(userId, "opus");
+  }
+
+  private createUserStream(userId: string, targetFormat: "pcm" | "opus"): Readable {
+    const stream = new Readable({
+      read() {
+        // Data is pushed asynchronously as frames arrive
+      },
+    });
+
+    let streamSet = this.userStreams.get(userId);
+    if (streamSet == null) {
+      streamSet = new Set();
+      this.userStreams.set(userId, streamSet);
+    }
+    const entry = { format: targetFormat, stream };
+    streamSet.add(entry);
+
+    const cleanup = () => {
+      const set = this.userStreams.get(userId);
+      if (set != null) {
+        set.delete(entry);
+        if (set.size === 0) {
+          this.userStreams.delete(userId);
+        }
+      }
+    };
+
+    stream.on("close", cleanup);
+    stream.on("end", cleanup);
+
+    return stream;
+  }
+
+  private dispatchUserStreamFrame(userId: string, formatByte: number, payload: Buffer): void {
+    const streamSet = this.userStreams.get(userId);
+    if (streamSet == null || streamSet.size === 0) return;
+
+    const frameFormat: "pcm" | "opus" | "ogg" =
+      formatByte === FORMAT_PCM ? "pcm" : formatByte === FORMAT_OPUS ? "opus" : "ogg";
+
+    for (const entry of streamSet) {
+      if (entry.format === frameFormat) {
+        entry.stream.push(Buffer.from(payload));
+      }
+    }
   }
 }

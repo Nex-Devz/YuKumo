@@ -254,7 +254,7 @@ describe("YuKumo", () => {
 
       const loadTracksSpy = vi.spyOn(node.rest, "loadTracks").mockImplementation(async (identifier: string) => {
         if (identifier.startsWith("ytsearch:")) {
-          return { loadType: "empty", data: {} };
+          return { loadType: "empty", data: null };
         }
         if (identifier.startsWith("scsearch:")) {
           return {
@@ -267,6 +267,7 @@ describe("YuKumo", () => {
                   title: "Fallback Track",
                   author: "Artist",
                   length: 120000,
+                  position: 0,
                   isSeekable: true,
                   isStream: false,
                   uri: "https://soundcloud.com/track",
@@ -280,7 +281,7 @@ describe("YuKumo", () => {
             ],
           };
         }
-        return { loadType: "empty", data: {} };
+        return { loadType: "empty", data: null };
       });
 
       const res = await yukumo.search("chill music");
@@ -302,7 +303,7 @@ describe("YuKumo", () => {
 
       const loadTracksSpy = vi.spyOn(node.rest, "loadTracks").mockResolvedValue({
         loadType: "empty",
-        data: {},
+        data: null,
       });
 
       const res = await yukumo.search({ query: "chill music", disableFallback: true });

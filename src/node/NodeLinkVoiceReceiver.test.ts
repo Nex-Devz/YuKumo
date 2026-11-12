@@ -213,4 +213,40 @@ describe("NodeLinkVoiceReceiver", () => {
 
     await expect(p).rejects.toThrow(/closed before opening/);
   });
+
+  it("pipes audio frames into createPCMStream and emits VAD speakingStart/End", async () => {
+    const receiver = createReceiver();
+    const p = receiver.connect();
+    const ws: MockWSInstance = MockWS.instances[0] as unknown as MockWSInstance;
+    ws.emit("open");
+    await p;
+
+    const vadStart = vi.fn();
+    const vadEnd = vi.fn();
+    receiver.on("speakingStart", vadStart);
+    receiver.on("speakingEnd", vadEnd);
+
+    const pcmStream = receiver.createPCMStream("user-pcm");
+    const receivedChunks: Buffer[] = [];
+    pcmStream.on("data", (chunk: Buffer) => {
+      receivedChunks.push(chunk);
+    });
+
+    // Start speaking
+    ws.emit("message", buildFrame(1, 2, "guild-1", "user-pcm"), true);
+    expect(vadStart).toHaveBeenCalledWith({ userId: "user-pcm", guildId: "guild-1" });
+
+    // Stream PCM audio chunk
+    const chunkData = Buffer.from([1, 2, 3, 4]);
+    ws.emit("message", buildFrame(3, 2, "guild-1", "user-pcm", chunkData), true);
+    await new Promise((r) => setImmediate(r));
+    expect(receivedChunks).toHaveLength(1);
+    expect(receivedChunks[0]).toEqual(chunkData);
+
+    // Stop speaking
+    ws.emit("message", buildFrame(2, 2, "guild-1", "user-pcm"), true);
+    expect(vadEnd).toHaveBeenCalled();
+
+    await receiver.destroy();
+  });
 });

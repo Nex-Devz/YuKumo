@@ -28,6 +28,27 @@ describe("FilterChain Presets & Custom Registry", () => {
     expect(chain.toPayload().equalizer).toEqual([{ band: 0, gain: 0.5 }]);
   });
 
+  it("should apply built-in preset pack names via setPreset", () => {
+    const chain = new FilterChain();
+    chain.setPreset("bassboost");
+    expect(chain.has("equalizer")).toBe(true);
+
+    chain.clear();
+    chain.setPreset("nightcore");
+    expect(chain.has("timescale")).toBe(true);
+    expect(chain.toPayload().timescale?.speed).toBe(1.25);
+
+    chain.clear();
+    chain.setPreset("8d");
+    expect(chain.has("rotation")).toBe(true);
+    expect(chain.toPayload().rotation?.rotationHz).toBe(0.2);
+
+    chain.clear();
+    chain.setPreset("slowed-reverb");
+    expect(chain.has("timescale")).toBe(true);
+    expect(chain.has("lowPass")).toBe(true);
+  });
+
   describe("plugin filters (LavaDSPX / arbitrary server-side filter plugins)", () => {
     it("serializes plugin filters under pluginFilters", () => {
       const chain = new FilterChain();
