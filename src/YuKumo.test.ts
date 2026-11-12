@@ -341,5 +341,58 @@ describe("YuKumo", () => {
 
       player.clearAutoplayHistory();
     });
+
+    it("exports and imports zero-downtime state snapshot", async () => {
+      const yukumo1 = new YuKumo({
+        nodes: [{ name: "node-1", host: "localhost", port: 2333, password: "pass" }],
+      });
+      const node1 = yukumo1.nodes.get("node-1")!;
+      const player1 = yukumo1.players.create({
+        guildId: "guild-snapshot",
+        voiceChannelId: "voice-1",
+        node: node1,
+      });
+
+      player1.queue.add({
+        encoded: "enc-1",
+        info: {
+          identifier: "t1",
+          title: "Track 1",
+          author: "Artist",
+          length: 5000,
+          position: 0,
+          isSeekable: true,
+          isStream: false,
+          uri: "https://example.com",
+          artworkUrl: null,
+          isrc: null,
+          sourceName: "youtube",
+        },
+        pluginInfo: {},
+        userData: {},
+      });
+      player1.setAutoplay(true);
+      await player1.setVolume(75);
+
+      const dump = yukumo1.exportState();
+      expect(dump.players).toHaveLength(1);
+      expect(dump.players[0]?.guildId).toBe("guild-snapshot");
+      expect(dump.players[0]?.volume).toBe(75);
+      expect(dump.players[0]?.autoplay).toBe(true);
+
+      const yukumo2 = new YuKumo({
+        nodes: [{ name: "node-1", host: "localhost", port: 2333, password: "pass" }],
+      });
+      const node2 = yukumo2.nodes.get("node-1")!;
+      (node2.ws as any)._state = "connected";
+
+      const restoredCount = await yukumo2.importState(dump);
+      expect(restoredCount).toBe(1);
+      const player2 = yukumo2.players.get("guild-snapshot");
+      expect(player2).toBeDefined();
+      expect(player2?.volume).toBe(75);
+      expect(player2?.autoplay).toBe(true);
+      expect(player2?.queue.size).toBe(1);
+    });
   });
 });

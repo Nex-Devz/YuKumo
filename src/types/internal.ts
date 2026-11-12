@@ -82,6 +82,14 @@ export interface VoiceGatewayPayload {
   };
 }
 
+export interface SerializedYuKumoState {
+  version: string;
+  timestamp: number;
+  userId: string;
+  players: import("../player/Player.ts").PlayerJson[];
+  voiceStates: Record<string, { channelId: string | null; sessionId: string | null; endpoint: string | null; token: string | null }>;
+}
+
 export interface ManagerOptions {
   nodes: NodeConfig[];
   userId?: string;

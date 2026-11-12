@@ -476,6 +476,91 @@ export class YuKumo {
     }
   }
 
+  /**
+   * Exports an in-memory zero-downtime state snapshot of all live players, queues,
+   * positions, filters, and voice states. Useful for hot-reloads, process re-exec,
+   * or fast state handoff without dropping audio connections.
+   */
+  public exportState(): import("./types/internal.ts").SerializedYuKumoState {
+    const players = this.players
+      .getAll()
+      .filter((p) => !p.destroyed)
+      .map((p) => p.toJSON());
+
+    const voiceStates: Record<string, { channelId: string | null; sessionId: string | null; endpoint: string | null; token: string | null }> = {};
+    for (const state of this.voice.getAll()) {
+      voiceStates[state.guildId] = {
+        channelId: state.channelId,
+        sessionId: state.sessionId,
+        endpoint: state.endpoint,
+        token: state.token,
+      };
+    }
+
+    return {
+      version: "1.9.0",
+      timestamp: Date.now(),
+      userId: this._userId,
+      players,
+      voiceStates,
+    };
+  }
+
+  /**
+   * Imports a state snapshot, reconstructing players and voice tracking seamlessly.
+   * If nodes are already connected with matching sessions, live playback is adopted directly.
+   */
+  public async importState(state: import("./types/internal.ts").SerializedYuKumoState): Promise<number> {
+    if (state == null || !Array.isArray(state.players)) return 0;
+
+    // Seed voice state tracker
+    if (state.voiceStates != null) {
+      for (const [guildId, vs] of Object.entries(state.voiceStates)) {
+        if (vs.sessionId != null) {
+          this.voice.handleVoiceStateUpdate({
+            guildId,
+            userId: this._userId,
+            channelId: vs.channelId,
+            sessionId: vs.sessionId,
+          });
+        }
+        if (vs.endpoint != null && vs.token != null) {
+          this.voice.handleVoiceServerUpdate(guildId, {
+            token: vs.token,
+            endpoint: vs.endpoint,
+          });
+        }
+      }
+    }
+
+    let restored = 0;
+    for (const snapshot of state.players) {
+      try {
+        await this.restorePlayerFromSnapshot(snapshot);
+        restored++;
+      } catch (err) {
+        this.logger.warn(
+          `Failed to import player for guild ${snapshot.guildId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+    return restored;
+  }
+
+  /**
+   * Static factory that instantiates a YuKumo client and immediately restores
+   * players from an exported state snapshot once connected.
+   */
+  public static async fromState(
+    options: ManagerOptions,
+    state: import("./types/internal.ts").SerializedYuKumoState,
+  ): Promise<YuKumo> {
+    const client = new YuKumo(options);
+    await client.init();
+    await client.importState(state);
+    return client;
+  }
+
   /** Destroys all players, closes node WS connections, and cleans up event listeners, caches, and storage */
   public async destroy(): Promise<void> {
     for (const adapter of this.adapters) {
