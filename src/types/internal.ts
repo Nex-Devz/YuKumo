@@ -109,6 +109,11 @@ export interface ManagerOptions {
   };
   defaultSearchSource?: string;
   /**
+   * Prioritized list of fallback sources (e.g. `["ytmsearch", "scsearch", "spsearch"]`)
+   * used when search returns empty or encounters a load error.
+   */
+  searchFallback?: string[];
+  /**
    * Session + player resuming across bot restarts.
    * - enabled: turn on Lavalink session resuming for all nodes and persist
    *   session IDs to the storage adapter so a restarted process reclaims its
@@ -166,6 +171,8 @@ export interface ManagerOptions {
     queueEmptyDestroyMs?: number;
     /** Enable autoplay on every created player (source-aware recommendations when the queue ends) */
     autoplay?: boolean;
+    /** Maximum number of played tracks to remember for autoplay deduplication (default 100) */
+    autoplayHistorySize?: number;
   };
   /** Custom client name sent in WS handshake and REST requests (default "YuKumo/1.9.0") */
   clientName?: string;
@@ -198,6 +205,13 @@ export interface SearchOptions {
   source?: string;
   nodeName?: string;
   requester?: unknown;
+  /**
+   * Prioritized list of fallback sources (e.g. `["ytmsearch", "scsearch", "spsearch"]`)
+   * used when the primary source returns empty or errors.
+   */
+  fallback?: string[];
+  /** When true, disables manager-level searchFallback for this specific query */
+  disableFallback?: boolean;
 }
 
 export interface SearchResult {

@@ -140,7 +140,7 @@ function buildIdentifier(query: string, source?: string, defaultSearchSource: st
   if (/^[a-zA-Z0-9]+:/.test(query)) {
     return query;
   }
-  if (source != null && source.trim() !== "") {
+  if (typeof source === "string" && source.trim() !== "") {
     const prefix = formatSourcePrefix(source);
     return `${prefix}:${query}`;
   }
@@ -162,6 +162,8 @@ export class YuKumo {
   public readonly searchCache: SearchCache;
   public readonly middleware = new MiddlewareRegistry();
   public defaultSearchSource: string;
+  /** Prioritized fallback search sources used when a search yields empty or error results */
+  public readonly searchFallback: string[];
   /** Disconnect behavior configuration (see ManagerOptions.onDisconnect) */
   private readonly onDisconnect: { destroyPlayer: boolean; autoReconnect: boolean };
   /** Discord gateway dispatcher for OP4 voice payloads (see ManagerOptions.send) */
@@ -190,7 +192,7 @@ export class YuKumo {
   private readonly linksWhitelist: (RegExp | string)[];
   private readonly linksBlacklist: (RegExp | string)[];
   /** Per-player defaults applied on createPlayer */
-  private readonly playerDefaults: NonNullable<ManagerOptions["playerDefaults"]>;
+  public readonly playerDefaults: NonNullable<ManagerOptions["playerDefaults"]>;
   /** Queue behavior defaults (persistence) */
   private readonly queueOptions: NonNullable<ManagerOptions["queueOptions"]>;
   /** Session + player resuming across restarts (see ManagerOptions.resuming) */
@@ -210,6 +212,7 @@ export class YuKumo {
         ? levelFilteredLogger(options.logger, options.logLevel ?? "warn")
         : new NoopLogger();
     this.defaultSearchSource = options.defaultSearchSource ?? "ytsearch";
+    this.searchFallback = options.searchFallback ?? [];
     this.onDisconnect = {
       destroyPlayer: options.onDisconnect?.destroyPlayer ?? true,
       autoReconnect: options.onDisconnect?.autoReconnect ?? false,
@@ -224,11 +227,12 @@ export class YuKumo {
     this.playerDefaults = {
       maxErrorsPerTime:
         options.playerDefaults?.maxErrorsPerTime !== undefined
-          ? options.playerDefaults.maxErrorsPerTime
-          : { threshold: 35000, maxAmount: 3 },
+            ? options.playerDefaults.maxErrorsPerTime
+            : { threshold: 35000, maxAmount: 3 },
       minAutoPlayMs: options.playerDefaults?.minAutoPlayMs ?? 10000,
       queueEmptyDestroyMs: options.playerDefaults?.queueEmptyDestroyMs ?? 0,
       autoplay: options.playerDefaults?.autoplay ?? false,
+      autoplayHistorySize: options.playerDefaults?.autoplayHistorySize ?? 100,
     };
     this.queueOptions = { persist: options.queueOptions?.persist ?? false };
     this.resuming = {
@@ -517,8 +521,19 @@ export class YuKumo {
    * @param source Optional search source prefix (e.g. "youtube", "spotify")
    */
   public async search(queryOrOptions: string | SearchOptions, source?: string): Promise<SearchResult> {
-    const resolved: SearchOptions =
-      typeof queryOrOptions === "string" ? { query: queryOrOptions, source } : queryOrOptions;
+    let resolved: SearchOptions;
+    if (typeof queryOrOptions === "string") {
+      resolved = { query: queryOrOptions, source };
+    } else {
+      resolved = {
+        query: queryOrOptions.query,
+        source: typeof queryOrOptions.source === "string" ? queryOrOptions.source : source,
+        nodeName: queryOrOptions.nodeName,
+        requester: queryOrOptions.requester,
+        fallback: queryOrOptions.fallback,
+        disableFallback: queryOrOptions.disableFallback,
+      };
+    }
 
     const linkError = this.checkLinkPolicy(resolved.query);
     if (linkError != null) {
@@ -535,17 +550,76 @@ export class YuKumo {
       return { loadType: "empty", tracks: [] };
     }
 
-    const identifier = buildIdentifier(hookResult.query, hookResult.source, this.defaultSearchSource);
+    const primaryResult = await this.executeRawSearch(
+      hookResult.query,
+      hookResult.source,
+      resolved.requester,
+      resolved.nodeName,
+    );
+
+    // If primary search succeeded with tracks, return it immediately
+    if (
+      primaryResult.loadType !== "empty" &&
+      primaryResult.loadType !== "error" &&
+      primaryResult.tracks.length > 0
+    ) {
+      return primaryResult;
+    }
+
+    // Determine if fallback search should run:
+    // Direct URLs and explicit URIs (e.g. https://, http://, spotify:) are never fallback-searched
+    const isDirectUri = /^https?:\/\//i.test(resolved.query) || /^[a-zA-Z0-9]+:/.test(resolved.query);
+    const fallbacks = resolved.disableFallback !== true
+      ? (resolved.fallback ?? this.searchFallback)
+      : [];
+
+    if (isDirectUri || fallbacks.length === 0) {
+      return primaryResult;
+    }
+
+    const primaryPrefix = formatSourcePrefix(hookResult.source ?? this.defaultSearchSource);
+    for (const fallbackSource of fallbacks) {
+      const fallbackPrefix = formatSourcePrefix(fallbackSource);
+      if (fallbackPrefix === primaryPrefix) continue;
+
+      try {
+        const fallbackRes = await this.executeRawSearch(
+          hookResult.query,
+          fallbackSource,
+          resolved.requester,
+          resolved.nodeName,
+        );
+        if (
+          fallbackRes.loadType !== "empty" &&
+          fallbackRes.loadType !== "error" &&
+          fallbackRes.tracks.length > 0
+        ) {
+          return fallbackRes;
+        }
+      } catch {
+        // Continue trying remaining fallback sources
+      }
+    }
+
+    return primaryResult;
+  }
+
+  private async executeRawSearch(
+    query: string,
+    source?: string,
+    requester?: unknown,
+    nodeName?: string,
+  ): Promise<SearchResult> {
+    const identifier = buildIdentifier(query, source, this.defaultSearchSource);
 
     // Cache first — a hit needs no node, so don't waste a load-balancer pick
     // (and cached queries keep working while all nodes are down)
     const cached = this.searchCache.get<SearchResult>(identifier);
     if (cached != null) {
-      return attachRequester(cached, resolved.requester);
+      return attachRequester(cached, requester);
     }
 
-    const nodeName = resolved.nodeName;
-    const node = nodeName != null ? this.nodes.get(nodeName) : this.nodes.pick(resolved.query);
+    const node = nodeName != null ? this.nodes.get(nodeName) : this.nodes.pick(query);
     if (node == null) {
       return { loadType: "empty", tracks: [] };
     }
@@ -565,7 +639,7 @@ export class YuKumo {
         this.searchCache.set(identifier, afterResult);
       }
 
-      return attachRequester(afterResult, resolved.requester);
+      return attachRequester(afterResult, requester);
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       return {

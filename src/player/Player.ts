@@ -146,6 +146,8 @@ export interface PlayerOptions {
   persistState?: boolean;
   /** Enable source-aware autoplay from creation */
   autoplay?: boolean;
+  /** Maximum number of played tracks to remember for autoplay deduplication (default 100) */
+  autoplayHistorySize?: number;
   /** Reference to the main YuKumo client */
   kumo: YuKumo;
 }
@@ -185,6 +187,10 @@ export class Player<TTrack extends TrackData = TrackData> {
   public minAutoPlayMs: number = 0;
   /** Destroy the player this many ms after the queue ends (0 disables) */
   public queueEmptyDestroyMs: number = 0;
+  /** Maximum number of played tracks to remember for autoplay deduplication */
+  public readonly autoplayHistorySize: number = 100;
+  private readonly autoplayHistory = new Set<string>();
+  private readonly autoplayHistoryList: string[] = [];
 
   private emptyVcTimer: ReturnType<typeof setTimeout> | null = null;
   private queueEmptyTimer: ReturnType<typeof setTimeout> | null = null;
@@ -248,6 +254,7 @@ export class Player<TTrack extends TrackData = TrackData> {
     // no `paused` field to recover the truth from. _paused was already set by
     // playTrack before the PATCH was sent.
     this._lastTrackStartTs = Date.now();
+    this.recordAutoplayHistory(track);
     this.cancelQueueEmptyDestroy();
     this.scheduleStateSave();
     this.settlePlayingWaiters();
@@ -333,6 +340,8 @@ export class Player<TTrack extends TrackData = TrackData> {
     this.maxErrorsPerTime = options.maxErrorsPerTime !== undefined ? options.maxErrorsPerTime : null;
     this.minAutoPlayMs = options.minAutoPlayMs ?? 0;
     this.queueEmptyDestroyMs = options.queueEmptyDestroyMs ?? 0;
+    this.autoplayHistorySize =
+      options.autoplayHistorySize ?? options.kumo?.playerDefaults?.autoplayHistorySize ?? 100;
     this.queue = new Queue<TTrack>();
     this.filters = new FilterChain();
     this.events = new EventDispatcher();
@@ -584,9 +593,35 @@ export class Player<TTrack extends TrackData = TrackData> {
     return this.autoplay;
   }
 
+  /** Records a played track identifier into the LRU autoplay history */
+  public recordAutoplayHistory(track?: TrackData | null): void {
+    const id = track?.info?.identifier;
+    if (id == null || id.length === 0) return;
+    if (this.autoplayHistory.has(id)) {
+      // Move to end (most recently played)
+      const idx = this.autoplayHistoryList.indexOf(id);
+      if (idx !== -1) this.autoplayHistoryList.splice(idx, 1);
+    }
+    this.autoplayHistory.add(id);
+    this.autoplayHistoryList.push(id);
+
+    while (this.autoplayHistoryList.length > this.autoplayHistorySize) {
+      const oldest = this.autoplayHistoryList.shift();
+      if (oldest != null) {
+        this.autoplayHistory.delete(oldest);
+      }
+    }
+  }
+
+  /** Clears the autoplay deduplication history cache */
+  public clearAutoplayHistory(): void {
+    this.autoplayHistory.clear();
+    this.autoplayHistoryList.length = 0;
+  }
+
   /** Identifiers of recently played tracks — used to keep autoplay from repeating itself */
   private recentTrackIdentifiers(limit: number = 20): Set<string> {
-    const ids = new Set<string>();
+    const ids = new Set<string>(this.autoplayHistory);
     const history = this.queue.historyList;
     for (const track of history.slice(Math.max(0, history.length - limit))) {
       const id = (track as TrackData).info?.identifier;
@@ -618,7 +653,8 @@ export class Player<TTrack extends TrackData = TrackData> {
   /**
    * Built-in source-aware autoplay. Builds a prioritized list of
    * recommendation identifiers for the track's own source (YouTube RD mix,
-   * Spotify `sprec`, Deezer `dzrec`, Yandex `ymrec`, SoundCloud related), then
+   * Spotify `sprec`, Deezer `dzrec`, Yandex `ymrec`, JioSaavn `jsrec`, Tidal `tdrec`,
+   * Apple Music `amrec`, SoundCloud related), then
    * falls back to a plain search on the artist + title — so autoplay works for
    * every source, not just YouTube. Recently played tracks are excluded.
    * Used when no custom `autoplayFetcher` is set; also callable directly.
@@ -647,6 +683,15 @@ export class Player<TTrack extends TrackData = TrackData> {
         break;
       case "yandexmusic":
         if (hasId) attempts.push(`ymrec:${identifier}`);
+        break;
+      case "jiosaavn":
+        if (hasId) attempts.push(`jsrec:${identifier}`);
+        break;
+      case "tidal":
+        if (hasId) attempts.push(`tdrec:${identifier}`);
+        break;
+      case "applemusic":
+        if (hasId) attempts.push(`amrec:${identifier}`);
         break;
       case "soundcloud":
         if (info.uri != null && info.uri.length > 0)

@@ -240,4 +240,105 @@ describe("YuKumo", () => {
       expect(yukumo.storage).toBe(customStorage);
     });
   });
+
+  describe("search fallback & autoplay LRU", () => {
+    it("falls back to secondary sources when primary returns empty", async () => {
+      const yukumo = new YuKumo({
+        nodes: [{ name: "node-1", host: "localhost", port: 2333, password: "pass" }],
+        searchFallback: ["scsearch", "spsearch"],
+      });
+
+      const node = yukumo.nodes.get("node-1")!;
+      (node.ws as any)._state = "connected";
+      node.rest.sessionId = "mock-session";
+
+      const loadTracksSpy = vi.spyOn(node.rest, "loadTracks").mockImplementation(async (identifier: string) => {
+        if (identifier.startsWith("ytsearch:")) {
+          return { loadType: "empty", data: {} };
+        }
+        if (identifier.startsWith("scsearch:")) {
+          return {
+            loadType: "search",
+            data: [
+              {
+                encoded: "sc-track-enc",
+                info: {
+                  identifier: "sc-1",
+                  title: "Fallback Track",
+                  author: "Artist",
+                  length: 120000,
+                  isSeekable: true,
+                  isStream: false,
+                  uri: "https://soundcloud.com/track",
+                  artworkUrl: null,
+                  isrc: null,
+                  sourceName: "soundcloud",
+                },
+                pluginInfo: {},
+                userData: {},
+              },
+            ],
+          };
+        }
+        return { loadType: "empty", data: {} };
+      });
+
+      const res = await yukumo.search("chill music");
+      expect(loadTracksSpy).toHaveBeenCalledTimes(2);
+      expect(res.loadType).toBe("search");
+      expect(res.tracks).toHaveLength(1);
+      expect(res.tracks[0]?.info.title).toBe("Fallback Track");
+    });
+
+    it("respects disableFallback option", async () => {
+      const yukumo = new YuKumo({
+        nodes: [{ name: "node-1", host: "localhost", port: 2333, password: "pass" }],
+        searchFallback: ["scsearch"],
+      });
+
+      const node = yukumo.nodes.get("node-1")!;
+      (node.ws as any)._state = "connected";
+      node.rest.sessionId = "mock-session";
+
+      const loadTracksSpy = vi.spyOn(node.rest, "loadTracks").mockResolvedValue({
+        loadType: "empty",
+        data: {},
+      });
+
+      const res = await yukumo.search({ query: "chill music", disableFallback: true });
+      expect(loadTracksSpy).toHaveBeenCalledTimes(1);
+      expect(res.loadType).toBe("empty");
+    });
+
+    it("manages autoplay history LRU deduplication on player", () => {
+      const yukumo = new YuKumo({
+        nodes: [{ name: "node-1", host: "localhost", port: 2333, password: "pass" }],
+        playerDefaults: { autoplayHistorySize: 3 },
+      });
+      const node = yukumo.nodes.get("node-1")!;
+      const player = yukumo.players.create({
+        guildId: "123",
+        voiceChannelId: "456",
+        node,
+      });
+
+      expect(player.autoplayHistorySize).toBe(3);
+
+      const track = (id: string) =>
+        ({
+          encoded: `enc-${id}`,
+          info: { identifier: id, title: `Title ${id}`, author: "A", length: 1000, isSeekable: true, isStream: false, uri: "", artworkUrl: null, isrc: null, sourceName: "youtube" },
+          pluginInfo: {},
+          userData: {},
+        }) as any;
+
+      player.recordAutoplayHistory(track("t1"));
+      player.recordAutoplayHistory(track("t2"));
+      player.recordAutoplayHistory(track("t3"));
+      // 4th track should evict oldest (t1)
+      player.recordAutoplayHistory(track("t4"));
+
+      player.clearAutoplayHistory();
+    });
+  });
 });
